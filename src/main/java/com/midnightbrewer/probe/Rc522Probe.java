@@ -43,6 +43,15 @@ public final class Rc522Probe {
     private static final byte VERSION_REG = 0x37;
     private static final byte TX_CONTROL_REG = 0x14;
 
+    // Init sequence, lifted verbatim from MFRC522_Init() in RC522.c.
+    private static final byte MODE_REG = 0x11;
+    private static final byte TX_AUTO_REG = 0x15;
+    private static final byte RF_CFG_REG = 0x26;
+    private static final byte T_MODE_REG = 0x2A;
+    private static final byte T_PRESCALER_REG = 0x2B;
+    private static final byte T_RELOAD_REG_H = 0x2C;
+    private static final byte T_RELOAD_REG_L = 0x2D;
+
     /** PCD_SOFTRESET. */
     private static final byte CMD_SOFT_RESET = 0x0F;
 
@@ -107,6 +116,21 @@ public final class Rc522Probe {
             System.out.printf("TxControlReg (0x14) = 0x%02X%n", txControl);
             System.out.println();
             System.out.println(interpret(version));
+
+            // Bring the RF field up, exactly as MFRC522_Init() does.
+            System.out.println();
+            System.out.println("-- init + antenna --");
+            initChip(spi);
+
+            int txAfter = readRegister(spi, TX_CONTROL_REG);
+            System.out.printf("TxControlReg after AntennaOn = 0x%02X%n", txAfter);
+            if ((txAfter & 0x03) == 0x03) {
+                System.out.println("RF FIELD ON -- Tx1RFEn and Tx2RFEn are both set.");
+                System.out.println("  The reader is now energising cards placed on the antenna.");
+            } else {
+                System.out.println("RF field did NOT come on. Antenna drivers still disabled.");
+                System.out.println("  Suspect the antenna coil connection on the module itself.");
+            }
 
             spi.close();
         } finally {
@@ -173,6 +197,34 @@ public final class Rc522Probe {
                     : "  Garbled rather than zero: that IS a signal-integrity symptom.\n"
                       + "  Retry with --baud=100000 and shorter wires.");
         }
+    }
+
+    /**
+     * The init sequence from {@code MFRC522_Init()}, values unchanged.
+     *
+     * <p>The timer setup is the part worth understanding: the prescaler makes
+     * one tick 0.5 ms and TReload = 600 gives roughly a 300 ms timeout. The C
+     * carries a comment saying 15 ms was too short, because DESFire
+     * non-volatile writes (CreateApplication, ChangeKey, WriteData) can take
+     * 50-100 ms and the reader must not give up while the card is still busy
+     * committing to EEPROM.
+     */
+    private static void initChip(Spi spi) throws InterruptedException {
+        writeRegister(spi, COMMAND_REG, CMD_SOFT_RESET);
+        Thread.sleep(50);
+
+        writeRegister(spi, T_MODE_REG, (byte) 0x8D);
+        writeRegister(spi, T_PRESCALER_REG, (byte) 0x3E);
+        writeRegister(spi, T_RELOAD_REG_H, (byte) 2);    // TReload = 2*256 + 88 = 600
+        writeRegister(spi, T_RELOAD_REG_L, (byte) 88);
+
+        writeRegister(spi, TX_AUTO_REG, (byte) 0x40);    // force 100% ASK modulation
+        writeRegister(spi, MODE_REG, (byte) 0x3D);       // CRC preset 0x6363
+        writeRegister(spi, RF_CFG_REG, (byte) 0x08);     // lower RX gain
+
+        // AntennaOn(): read-modify-write, setting Tx1RFEn | Tx2RFEn.
+        int current = readRegister(spi, TX_CONTROL_REG);
+        writeRegister(spi, TX_CONTROL_REG, (byte) (current | 0x03));
     }
 
     private static String hex(byte[] b) {
