@@ -229,9 +229,12 @@ after a Debit but before a Commit.
 |---|---|---|
 | `0x00` | OPERATION_OK | |
 | `0xAF` | ADDITIONAL_FRAME | more data coming, not an error |
+| `0xA0` | APPLICATION_NOT_FOUND | card was never provisioned — see §9 |
+| `0xF0` | FILE_NOT_FOUND | app exists but the value file does not |
 | `0xBE` | BOUNDARY_ERROR | debit would breach the lower limit |
 | `0x9D` | PERMISSION_DENIED | wrong key for this right — check §2.4 |
 | `0xAE` | AUTHENTICATION_ERROR | not authenticated, or session died |
+| `0xDE` | DUPLICATE_ERROR | app/file already exists — usually benign |
 | `0x1E` | INTEGRITY_ERROR | CMAC/CRC failed — treat as hostile |
 
 ---
@@ -419,23 +422,57 @@ laptop with no Pi and no card.
 
 ---
 
-## 9. Provisioning a card (run once, from a setup tool — not the kiosk)
+## 9. Provisioning a card
+
+A factory card has no application on it. `SelectApplication(0x010203)` on a
+blank card returns **`0xA0 APPLICATION_NOT_FOUND`** — that status means "this
+card was never set up", not "this card is broken".
 
 1. `SelectApplication(0x000000)` — the PICC level
 2. Authenticate with the PICC master key
 3. `CreateApplication(0x010203, numKeys)` — enough keys for kiosk + top-up
 4. `SelectApplication(0x010203)`
-5. Authenticate with the app master key
+5. Authenticate with the app master key (all zeros on a fresh application)
 6. `ChangeKey` for each role, using **diversified** keys (§2.2)
 7. `CreateValueFile(0xCC)` with the access rights from §2.4
 8. Verify with `GetFileSettings` (0xF5) and `GetValue` (0x6C)
 
-Keep this in a separate tool. The kiosk binary should not contain the code
-paths to create applications or change keys — it has no business being able
-to, and a kiosk that *can* reformat cards is a kiosk that *will*, the first
-time you get a state machine wrong.
+### Step 2 is not the AES auth you already wrote
 
-Steps 1–6 map closely onto `df_setup_desfire()`, which you already have.
+A factory PICC master key is **2K3DES**, not AES, so `AuthenticateEV2First`
+(0x71) will not work at PICC level on a blank card. You need
+`AuthenticateLegacy` (0x0A), which has a different handshake — no TI, no
+command counter, and the reader side uses the DES *decrypt* direction.
+
+Your C already handles this, and handles it defensively:
+`_auth_picc_factory()` tries legacy (0x0A), then ISO 3K3DES (0x1A), then AES
+(0x71), because which one a factory card answers to varies by generation.
+Port that fallback rather than assuming one.
+
+### The landmine in `df_setup_desfire()`
+
+Steps 2–7 above map onto `df_setup_desfire()` — but **step 1 of that function
+is `df_full_format()`, which is FormatPICC (0xFC), and it erases every
+application and file on the card.**
+
+That is correct for a provisioning bench where every card starts disposable.
+It is catastrophic anywhere else. If you port `df_setup_desfire` wholesale
+into anything that meets cards it did not create, the first unrecognised card
+someone taps — an office badge, a transit card — gets wiped. Port steps 2–7
+and leave 0xFC out of the binary entirely.
+
+### Who is allowed to do this
+
+The **kiosk must not contain these code paths at all**. Not the format, not
+CreateApplication, not ChangeKey. It has no business being able to, and a
+kiosk that *can* reformat cards is a kiosk that *will*, the first time you get
+a state machine wrong.
+
+A top-up or admin tool provisioning a card is defensible — it is the thing
+whose job is setting cards up. Even there, make it an explicit confirmed
+action rather than something that fires automatically on an unrecognised tap.
+Creating an application consumes card EEPROM permanently, and the person
+holding the card did not necessarily mean to hand it to you.
 
 ---
 
