@@ -53,7 +53,16 @@ public final class Rc522Probe {
     }
 
     public static void main(String[] args) throws Exception {
-        System.out.println("RC522 probe -- SPI0 CS0, 1 MHz, mode 0, RST on BCM " + RST_GPIO);
+        boolean loopback = args.length > 0 && args[0].equals("--loopback");
+        int baud = 1_000_000;
+        for (String a : args) {
+            if (a.startsWith("--baud=")) {
+                baud = Integer.parseInt(a.substring(7));
+            }
+        }
+
+        System.out.println("RC522 probe -- SPI0 CS0, " + baud + " Hz, mode 0, RST on BCM "
+                + RST_GPIO + (loopback ? "  [LOOPBACK MODE]" : ""));
 
         Context pi4j = Pi4J.newAutoContext();
         try {
@@ -69,6 +78,8 @@ public final class Rc522Probe {
                             .build());
             rst.state(DigitalState.HIGH);
             Thread.sleep(50);
+            System.out.println("RST pin reads back: " + rst.state()
+                    + "  (must be HIGH, or the chip stays in reset)");
 
             Spi spi = pi4j.create(
                     Spi.newConfigBuilder(pi4j)
@@ -77,8 +88,14 @@ public final class Rc522Probe {
                             .bus(SpiBus.BUS_0)
                             .chipSelect(SpiChipSelect.CS_0)
                             .mode(SpiMode.MODE_0)
-                            .baud(1_000_000)
+                            .baud(baud)
                             .build());
+
+            if (loopback) {
+                runLoopback(spi);
+                spi.close();
+                return;
+            }
 
             writeRegister(spi, COMMAND_REG, CMD_SOFT_RESET);
             Thread.sleep(50);
@@ -115,6 +132,55 @@ public final class Rc522Probe {
         byte[] tx = {address, value};
         byte[] rx = new byte[2];
         spi.transfer(tx, rx, 2);
+    }
+
+    /**
+     * Sends a known pattern and checks whether it comes back.
+     *
+     * <p>Run this with the RC522 disconnected and a single jumper tying MOSI
+     * (pin 19) directly to MISO (pin 21). It splits the problem cleanly in
+     * two: if the pattern echoes, the Pi's SPI controller, both data lines and
+     * the kernel driver are all fine, and the fault is the module or its
+     * power. If it does not echo, the fault is on the Pi side and the module
+     * is irrelevant.
+     */
+    private static void runLoopback(Spi spi) {
+        byte[] tx = {(byte) 0xA5, 0x5A, (byte) 0xFF, 0x00, 0x0F, (byte) 0xF0};
+        byte[] rx = new byte[tx.length];
+        spi.transfer(tx, rx, tx.length);
+
+        System.out.println("  sent: " + hex(tx));
+        System.out.println("  recv: " + hex(rx));
+        System.out.println();
+
+        if (java.util.Arrays.equals(tx, rx)) {
+            System.out.println("LOOPBACK PASS -- the Pi's SPI works and MISO reads correctly.");
+            System.out.println("  So the fault is the RC522 module or its power, not the Pi.");
+            System.out.println("  Check 3.3V at the module's own pin, and that its header is");
+            System.out.println("  actually soldered rather than press-fitted.");
+        } else {
+            boolean allZero = true;
+            for (byte b : rx) {
+                if (b != 0) {
+                    allZero = false;
+                    break;
+                }
+            }
+            System.out.println("LOOPBACK FAIL -- the Pi did not read back what it sent.");
+            System.out.println(allZero
+                    ? "  All zeros: the MOSI->MISO jumper is not making contact,\n"
+                      + "  or it is on the wrong pins (MOSI=19, MISO=21)."
+                    : "  Garbled rather than zero: that IS a signal-integrity symptom.\n"
+                      + "  Retry with --baud=100000 and shorter wires.");
+        }
+    }
+
+    private static String hex(byte[] b) {
+        StringBuilder sb = new StringBuilder();
+        for (byte x : b) {
+            sb.append(String.format("%02X ", x));
+        }
+        return sb.toString().trim();
     }
 
     private static String interpret(int version) {
