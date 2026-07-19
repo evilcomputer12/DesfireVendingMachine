@@ -87,7 +87,10 @@ public final class Rc522Probe {
         System.out.println("RC522 probe -- SPI0 CS0, " + baud + " Hz, mode 0, RST on BCM "
                 + RST_GPIO + (loopback ? "  [LOOPBACK MODE]" : ""));
 
+        long t0 = System.nanoTime();
         Context pi4j = Pi4J.newAutoContext();
+        long tPi4j = System.nanoTime();
+        System.out.printf("[timing] Pi4J.newAutoContext(): %d ms%n", ms(t0, tPi4j));
         try {
             // The RC522 holds itself in reset while RST is low, so this has to
             // go high before any register will answer.
@@ -150,6 +153,7 @@ public final class Rc522Probe {
             // and an intermittent RF stack is worse than a broken one.
             System.out.println();
             System.out.println("-- card detection (REQA, WUPA fallback) x20 --");
+            long tPoll0 = System.nanoTime();
             int hits = 0;
             byte[] lastAtqa = null;
             for (int i = 0; i < 20; i++) {
@@ -161,6 +165,9 @@ public final class Rc522Probe {
                 Thread.sleep(30);
             }
             System.out.printf("detected %d/20 attempts%n", hits);
+            System.out.printf("[timing] 20 polls: %d ms total, %d ms each "
+                            + "(600 ms of that is the deliberate 30 ms sleeps)%n",
+                    ms(tPoll0, System.nanoTime()), ms(tPoll0, System.nanoTime()) / 20);
             if (lastAtqa != null) {
                 System.out.println("ATQA = " + hex(lastAtqa) + describeAtqa(lastAtqa));
             }
@@ -360,6 +367,10 @@ public final class Rc522Probe {
 
     private static void clearBitMask(Spi spi, byte register, byte mask) {
         writeRegister(spi, register, (byte) (readRegister(spi, register) & ~mask));
+    }
+
+    private static long ms(long fromNanos, long toNanos) {
+        return (toNanos - fromNanos) / 1_000_000L;
     }
 
     private static String hex(byte[] b) {
