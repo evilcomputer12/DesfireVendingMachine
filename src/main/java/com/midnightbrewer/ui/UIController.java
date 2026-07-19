@@ -69,8 +69,13 @@ public class UIController {
     }
 
     @FXML
-    private void handleSelectColdBrew() {
-        selectDrink("Cold Brew - $3.50");
+    private void handleSelectMatcha() {
+        selectDrink("Matcha Latte - $4.00");
+    }
+
+    @FXML
+    private void handleSelectBlackTea() {
+        selectDrink("Black Tea - $2.00");
     }
 
     private void selectDrink(String drink) {
