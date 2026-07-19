@@ -4,134 +4,194 @@
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ProgressBar?>
-<?import javafx.scene.image.Image?>
 <?import javafx.scene.image.ImageView?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.GridPane?>
 <?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
-<?import javafx.scene.text.Font?>
-<?import javafx.scene.layout.GridPane?>
-<?import javafx.scene.layout.ColumnConstraints?>
-<?import javafx.scene.layout.RowConstraints?>
-<StackPane fx:id="rootPane" prefHeight="600.0" prefWidth="1024.0" style="-fx-background-color: #121212;" xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.midnightbrewer.ui.UIController">
-   <children>
-      <!-- Selection Screen -->
-      <VBox fx:id="selectionScreen" alignment="CENTER" spacing="30.0">
-         <children>
-            <Label text="Select Your Fuel" textFill="#e0e0e0">
-               <font>
-                  <Font name="System Bold" size="36.0" />
-               </font>
-            </Label>
-            <GridPane alignment="CENTER" hgap="30.0" vgap="10.0">
-               <columnConstraints>
-                  <ColumnConstraints halignment="CENTER" hgrow="SOMETIMES" minWidth="10.0" />
-                  <ColumnConstraints halignment="CENTER" hgrow="SOMETIMES" minWidth="10.0" />
-                  <ColumnConstraints halignment="CENTER" hgrow="SOMETIMES" minWidth="10.0" />
-               </columnConstraints>
-               <rowConstraints>
-                  <RowConstraints valignment="CENTER" vgrow="SOMETIMES" minHeight="10.0" />
-                  <RowConstraints valignment="CENTER" vgrow="SOMETIMES" minHeight="10.0" />
-                  <RowConstraints valignment="CENTER" vgrow="SOMETIMES" minHeight="10.0" />
-               </rowConstraints>
-               <children>
-                  <!-- Row 0 -->
-                  <VBox alignment="CENTER" spacing="5.0" GridPane.columnIndex="0" GridPane.rowIndex="0">
-                     <children>
-                        <ImageView fitHeight="130.0" fitWidth="130.0" pickOnBounds="true" preserveRatio="true"><image><Image url="@/images/espresso.jpg" /></image></ImageView>
-                        <Button fx:id="btnEspresso" mnemonicParsing="false" onAction="#handleSelectEspresso" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Espresso&#10;$1.50" textAlignment="CENTER"><font><Font name="System Bold" size="14.0" /></font></Button>
-                     </children>
-                  </VBox>
-                  <VBox alignment="CENTER" spacing="5.0" GridPane.columnIndex="1" GridPane.rowIndex="0">
-                     <children>
-                        <ImageView fitHeight="130.0" fitWidth="130.0" pickOnBounds="true" preserveRatio="true"><image><Image url="@/images/latte.jpg" /></image></ImageView>
-                        <Button fx:id="btnLatte" mnemonicParsing="false" onAction="#handleSelectLatte" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Latte&#10;$2.50" textAlignment="CENTER"><font><Font name="System Bold" size="14.0" /></font></Button>
-                     </children>
-                  </VBox>
-                  <VBox alignment="CENTER" spacing="5.0" GridPane.columnIndex="2" GridPane.rowIndex="0">
-                     <children>
-                        <ImageView fitHeight="130.0" fitWidth="130.0" pickOnBounds="true" preserveRatio="true"><image><Image url="@/images/americano.jpg" /></image></ImageView>
-                        <Button fx:id="btnAmericano" mnemonicParsing="false" onAction="#handleSelectAmericano" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Americano&#10;$2.00" textAlignment="CENTER"><font><Font name="System Bold" size="14.0" /></font></Button>
-                     </children>
-                  </VBox>
-                  <!-- Row 1 -->
-                  <VBox alignment="CENTER" spacing="5.0" GridPane.columnIndex="0" GridPane.rowIndex="1">
-                     <children>
-                        <ImageView fitHeight="130.0" fitWidth="130.0" pickOnBounds="true" preserveRatio="true"><image><Image url="@/images/cappuccino.jpg" /></image></ImageView>
-                        <Button fx:id="btnCappuccino" mnemonicParsing="false" onAction="#handleSelectCappuccino" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Cappuccino&#10;$3.00" textAlignment="CENTER"><font><Font name="System Bold" size="14.0" /></font></Button>
-                     </children>
-                  </VBox>
-                  <VBox alignment="CENTER" spacing="5.0" GridPane.columnIndex="1" GridPane.rowIndex="1">
-                     <children>
-                        <ImageView fitHeight="130.0" fitWidth="130.0" pickOnBounds="true" preserveRatio="true"><image><Image url="@/images/mocha.jpg" /></image></ImageView>
-                        <Button fx:id="btnMocha" mnemonicParsing="false" onAction="#handleSelectMocha" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Mocha&#10;$3.50" textAlignment="CENTER"><font><Font name="System Bold" size="14.0" /></font></Button>
-                     </children>
-                  </VBox>
-                  <VBox alignment="CENTER" spacing="5.0" GridPane.columnIndex="2" GridPane.rowIndex="1">
-                     <children>
-                        <ImageView fitHeight="130.0" fitWidth="130.0" pickOnBounds="true" preserveRatio="true"><image><Image url="@/images/macchiato.jpg" /></image></ImageView>
-                        <Button fx:id="btnMacchiato" mnemonicParsing="false" onAction="#handleSelectMacchiato" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Macchiato&#10;$3.50" textAlignment="CENTER"><font><Font name="System Bold" size="14.0" /></font></Button>
-                     </children>
-                  </VBox>
-                  <!-- Row 2 -->
-                  <VBox alignment="CENTER" spacing="5.0" GridPane.columnIndex="0" GridPane.rowIndex="2">
-                     <children>
-                        <ImageView fitHeight="130.0" fitWidth="130.0" pickOnBounds="true" preserveRatio="true"><image><Image url="@/images/flatwhite.jpg" /></image></ImageView>
-                        <Button fx:id="btnFlatWhite" mnemonicParsing="false" onAction="#handleSelectFlatWhite" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Flat White&#10;$3.00" textAlignment="CENTER"><font><Font name="System Bold" size="14.0" /></font></Button>
-                     </children>
-                  </VBox>
-                  <VBox alignment="CENTER" spacing="5.0" GridPane.columnIndex="1" GridPane.rowIndex="2">
-                     <children>
-                        <ImageView fitHeight="130.0" fitWidth="130.0" pickOnBounds="true" preserveRatio="true"><image><Image url="@/images/matcha.jpg" /></image></ImageView>
-                        <Button fx:id="btnMatcha" mnemonicParsing="false" onAction="#handleSelectMatcha" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Matcha Latte&#10;$4.00" textAlignment="CENTER"><font><Font name="System Bold" size="14.0" /></font></Button>
-                     </children>
-                  </VBox>
-                  <VBox alignment="CENTER" spacing="5.0" GridPane.columnIndex="2" GridPane.rowIndex="2">
-                     <children>
-                        <ImageView fitHeight="130.0" fitWidth="130.0" pickOnBounds="true" preserveRatio="true"><image><Image url="@/images/blacktea.jpg" /></image></ImageView>
-                        <Button fx:id="btnBlackTea" mnemonicParsing="false" onAction="#handleSelectBlackTea" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Black Tea&#10;$2.00" textAlignment="CENTER"><font><Font name="System Bold" size="14.0" /></font></Button>
-                     </children>
-                  </VBox>
-               </children>
-            </GridPane>
-         </children>
-      </VBox>
+<?import javafx.scene.Group?>
+<?import javafx.scene.shape.Arc?>
+<?import javafx.scene.shape.Circle?>
 
-      <!-- Payment Screen -->
-      <VBox fx:id="paymentScreen" alignment="CENTER" spacing="40.0" visible="false">
+<!--
+  Scaffolding only. The nine drink tiles are NOT declared here — the
+  controller generates them from DrinkCatalog, so adding a drink to the menu
+  never means touching this file.
+-->
+<BorderPane fx:id="rootPane" prefHeight="600.0" prefWidth="1024.0"
+            styleClass="stage-root"
+            stylesheets="@styles.css"
+            xmlns="http://javafx.com/javafx/17"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.midnightbrewer.ui.UIController">
+
+   <!-- ══ header ══════════════════════════════════════════════════ -->
+   <top>
+      <HBox alignment="CENTER_LEFT" spacing="14.0" styleClass="header">
          <children>
-            <Label text="Please tap your DESFire Card..." textFill="#03dac6">
-               <font>
-                  <Font size="28.0" />
-               </font>
-            </Label>
-            <Label fx:id="selectedItemLabel" text="Item" textFill="#bb86fc">
-               <font>
-                  <Font name="System Italic" size="24.0" />
-               </font>
-            </Label>
-            <HBox alignment="CENTER" spacing="30.0">
-                <Button mnemonicParsing="false" onAction="#handleCancel" style="-fx-background-color: #CF6679; -fx-text-fill: white; -fx-background-radius: 10;" text="Cancel">
-                   <font>
-                      <Font size="20.0" />
-                   </font>
-                </Button>
-                <!-- Hidden button for testing without hardware -->
-                <Button mnemonicParsing="false" onAction="#simulateSuccessfulPayment" style="-fx-background-color: transparent; -fx-text-fill: #444444;" text="Simulate Tap" />
+            <VBox spacing="1.0">
+               <children>
+                  <HBox spacing="0.0">
+                     <children>
+                        <Label styleClass="wordmark" text="THE MIDNIGHT " />
+                        <Label styleClass="wordmark-accent" text="BREWER" />
+                     </children>
+                  </HBox>
+                  <Label styleClass="tagline" text="TAP TO PAY · DESFIRE EV2 SECURE WALLET" />
+               </children>
+            </VBox>
+
+            <Region HBox.hgrow="ALWAYS" />
+
+            <HBox fx:id="statusPill" alignment="CENTER" spacing="9.0" styleClass="status-pill">
+               <children>
+                  <Circle fx:id="statusDot" radius="4.5" styleClass="status-dot" />
+                  <Label fx:id="statusLabel" styleClass="status-text" text="READER READY" />
+               </children>
             </HBox>
          </children>
-      </VBox>
+      </HBox>
+   </top>
 
-      <!-- Preparation Screen -->
-      <VBox fx:id="preparationScreen" alignment="CENTER" spacing="30.0" visible="false">
+   <!-- ══ screens ═════════════════════════════════════════════════ -->
+   <center>
+      <StackPane fx:id="screenStack">
          <children>
-            <Label text="Brewing your coffee..." textFill="#e0e0e0">
-               <font>
-                  <Font size="32.0" />
-               </font>
-            </Label>
-            <ProgressBar fx:id="progressBar" prefHeight="30.0" prefWidth="400.0" progress="0.0" style="-fx-accent: #BB86FC;" />
+
+            <!-- ── 1. selection ─────────────────────────────────── -->
+            <VBox fx:id="selectionScreen" alignment="TOP_CENTER" spacing="6.0">
+               <children>
+                  <Label styleClass="screen-title" text="CHOOSE YOUR FUEL">
+                     <VBox.margin>
+                        <Insets top="10.0" bottom="2.0" />
+                     </VBox.margin>
+                  </Label>
+                  <!-- Populated at runtime by UIController#buildDrinkGrid(). -->
+                  <GridPane fx:id="drinkGrid" alignment="CENTER"
+                            hgap="16.0" vgap="12.0" styleClass="drink-grid" />
+               </children>
+            </VBox>
+
+            <!-- ── 2. payment ───────────────────────────────────── -->
+            <VBox fx:id="paymentScreen" alignment="CENTER" spacing="16.0" visible="false">
+               <children>
+                  <StackPane fx:id="nfcPulse" prefHeight="150.0" prefWidth="150.0">
+                     <children>
+                        <Circle fx:id="ring3" radius="70.0" styleClass="nfc-ring" />
+                        <Circle fx:id="ring2" radius="56.0" styleClass="nfc-ring" />
+                        <Circle fx:id="ring1" radius="42.0" styleClass="nfc-ring" />
+                        <Circle radius="30.0" styleClass="nfc-core" />
+                        <!--
+                          The standard contactless mark: a dot plus three
+                          right-opening arcs.
+
+                          These MUST live in a Group. StackPane centres each
+                          child by its own layout bounds, and an Arc's bounds
+                          are the drawn segment rather than the circle it is
+                          taken from — so three arcs of different radii would
+                          each be centred separately and collapse into a blob.
+                          Inside a Group they keep their shared centre.
+                        -->
+                        <Group>
+                           <children>
+                              <Circle centerX="-14.0" centerY="0.0" radius="3.0"
+                                      styleClass="nfc-glyph" />
+                              <Arc centerX="-14.0" centerY="0.0" length="100.0"
+                                   radiusX="9.0" radiusY="9.0" startAngle="-50.0"
+                                   styleClass="nfc-wave" type="OPEN" />
+                              <Arc centerX="-14.0" centerY="0.0" length="100.0"
+                                   radiusX="16.0" radiusY="16.0" startAngle="-50.0"
+                                   styleClass="nfc-wave" type="OPEN" />
+                              <Arc centerX="-14.0" centerY="0.0" length="100.0"
+                                   radiusX="23.0" radiusY="23.0" startAngle="-50.0"
+                                   styleClass="nfc-wave" type="OPEN" />
+                           </children>
+                        </Group>
+                     </children>
+                  </StackPane>
+
+                  <Label styleClass="pay-headline" text="TAP YOUR CARD" />
+                  <Label fx:id="paymentHintLabel" styleClass="pay-sub"
+                         text="Hold your card flat against the reader" />
+
+                  <HBox alignment="CENTER" spacing="14.0">
+                     <children>
+                        <ImageView fx:id="paymentDrinkImage" fitHeight="64.0" fitWidth="64.0"
+                                   preserveRatio="true" />
+                        <VBox alignment="CENTER_LEFT" spacing="2.0">
+                           <children>
+                              <Label fx:id="paymentItemLabel" styleClass="pay-item" text="Item" />
+                              <Label fx:id="paymentAmountLabel" styleClass="pay-amount" text="\$0.00" />
+                           </children>
+                        </VBox>
+                     </children>
+                  </HBox>
+
+                  <HBox alignment="CENTER" spacing="16.0">
+                     <children>
+                        <Button mnemonicParsing="false" onAction="#handleCancel"
+                                styleClass="btn-ghost" text="CANCEL" />
+                        <Button fx:id="devTapButton" mnemonicParsing="false"
+                                onAction="#handleSimulatedTap"
+                                styleClass="btn-dev" text="simulate tap" />
+                     </children>
+                     <VBox.margin>
+                        <Insets top="4.0" />
+                     </VBox.margin>
+                  </HBox>
+               </children>
+            </VBox>
+
+            <!-- ── 3. preparation ───────────────────────────────── -->
+            <VBox fx:id="preparationScreen" alignment="CENTER" spacing="20.0" visible="false">
+               <children>
+                  <ImageView fx:id="prepDrinkImage" fitHeight="180.0" fitWidth="180.0"
+                             preserveRatio="true" />
+                  <Label fx:id="prepHeadlineLabel" styleClass="prep-headline" text="Brewing…" />
+                  <Label fx:id="prepStepLabel" styleClass="prep-step" text="Grinding beans" />
+                  <ProgressBar fx:id="progressBar" prefWidth="420.0" progress="0.0"
+                               styleClass="brew-bar" />
+               </children>
+            </VBox>
+
+            <!-- ── 4. result ────────────────────────────────────── -->
+            <VBox fx:id="resultScreen" alignment="CENTER" spacing="18.0" visible="false">
+               <children>
+                  <ImageView fx:id="resultDrinkImage" fitHeight="120.0" fitWidth="120.0"
+                             preserveRatio="true" />
+                  <Label fx:id="resultHeadlineLabel" styleClass="result-headline"
+                         text="Enjoy your coffee" />
+                  <Label fx:id="resultDetailLabel" styleClass="result-detail" text="" />
+
+                  <HBox fx:id="balancePanel" alignment="CENTER" spacing="22.0"
+                        styleClass="balance-panel" maxWidth="440.0">
+                     <children>
+                        <VBox alignment="CENTER" spacing="3.0">
+                           <children>
+                              <Label styleClass="balance-label" text="PREVIOUS" />
+                              <Label fx:id="balanceBeforeLabel" styleClass="balance-before"
+                                     text="\$0.00" />
+                           </children>
+                        </VBox>
+                        <Label styleClass="balance-arrow" text="→" />
+                        <VBox alignment="CENTER" spacing="3.0">
+                           <children>
+                              <Label styleClass="balance-label" text="REMAINING ON CARD" />
+                              <Label fx:id="balanceAfterLabel" styleClass="balance-after"
+                                     text="\$0.00" />
+                           </children>
+                        </VBox>
+                     </children>
+                  </HBox>
+
+                  <Button mnemonicParsing="false" onAction="#handleReturnToMenu"
+                          styleClass="btn-ghost" text="DONE" />
+               </children>
+            </VBox>
+
          </children>
-      </VBox>
-   </children>
-</StackPane>
+      </StackPane>
+   </center>
+</BorderPane>

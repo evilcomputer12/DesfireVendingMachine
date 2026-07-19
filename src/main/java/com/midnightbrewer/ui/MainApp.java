@@ -1,34 +1,79 @@
 package com.midnightbrewer.ui;
 
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.input.KeyCode;
+import javafx.scene.paint.Color;
 import javafx.stage.Stage;
+import javafx.stage.StageStyle;
 
 import java.net.URL;
 
+/**
+ * Kiosk entry point.
+ *
+ * <p>Sized for a 1024x600 panel. Runs undecorated and fullscreen on the Pi;
+ * press <kbd>Esc</kbd> to quit, which matters because an undecorated
+ * fullscreen window with no exit path is genuinely hard to get out of on a
+ * touchscreen with no keyboard shortcuts bound.
+ */
 public class MainApp extends Application {
 
-    @Override
-    public void start(Stage primaryStage) throws Exception {
-        URL fxmlLocation = getClass().getResource("/MidnightBrewer.fxml");
-        if (fxmlLocation == null) {
-            System.err.println("Cannot find /MidnightBrewer.fxml. Make sure it is in src/main/resources/");
-            System.exit(1);
-        }
-        Parent root = FXMLLoader.load(fxmlLocation);
+    private static final double WIDTH = 1024;
+    private static final double HEIGHT = 600;
 
-        Scene scene = new Scene(root, 1024, 600);
-        primaryStage.setTitle("The Midnight Brewer");
-        
-        // Strict Kiosk Mode
-        primaryStage.initStyle(javafx.stage.StageStyle.UNDECORATED);
-        primaryStage.setFullScreen(true);
-        primaryStage.setFullScreenExitHint("");
-        
-        primaryStage.setScene(scene);
-        primaryStage.show();
+    /**
+     * Set {@code -Dbrewer.windowed=true} to run in a normal window while
+     * developing on a laptop.
+     */
+    private static final boolean WINDOWED =
+            Boolean.getBoolean("brewer.windowed");
+
+    private UIController controller;
+
+    @Override
+    public void start(Stage stage) throws Exception {
+        URL fxml = getClass().getResource("/MidnightBrewer.fxml");
+        if (fxml == null) {
+            throw new IllegalStateException(
+                    "MidnightBrewer.fxml not found on the classpath — "
+                    + "expected it in src/main/resources/");
+        }
+
+        // Instance loader (not the static FXMLLoader.load) so we can keep the
+        // controller and shut the reader down cleanly on exit.
+        FXMLLoader loader = new FXMLLoader(fxml);
+        Parent root = loader.load();
+        controller = loader.getController();
+
+        Scene scene = new Scene(root, WIDTH, HEIGHT, Color.web("#0D0D11"));
+
+        scene.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ESCAPE) {
+                Platform.exit();
+            }
+        });
+
+        stage.setTitle("The Midnight Brewer");
+        stage.setScene(scene);
+
+        if (!WINDOWED) {
+            stage.initStyle(StageStyle.UNDECORATED);
+            stage.setFullScreen(true);
+            stage.setFullScreenExitHint("");
+        }
+
+        stage.show();
+    }
+
+    @Override
+    public void stop() {
+        if (controller != null) {
+            controller.shutdown();
+        }
     }
 
     public static void main(String[] args) {

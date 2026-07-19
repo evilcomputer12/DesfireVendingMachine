@@ -1,0 +1,313 @@
+/*
+ * The Midnight Brewer — kiosk stylesheet
+ *
+ * Tuned for a 1024x600 7" touchscreen at arm's length. Two rules drive most
+ * of the choices here:
+ *   1. Touch targets are >= 64px tall. Fingers are not mouse cursors.
+ *   2. :pressed matters more than :hover. A touchscreen has no hover state,
+ *      so every interactive element must react visibly to being pressed or
+ *      it feels broken.
+ */
+
+.root {
+    -fx-font-family: "Inter", "Helvetica Neue", "Segoe UI", "DejaVu Sans", sans-serif;
+
+    /* Design tokens, referenced by name below. */
+    ink-bg:         #0D0D11;
+    ink-surface:    #17171E;
+    ink-raised:     #20202B;
+    ink-line:       #2E2E3D;
+    accent:         #BB86FC;
+    accent-dim:     #7F5AF0;
+    teal:           #03DAC6;
+    danger:         #CF6679;
+    text-hi:        #EDEBF2;
+    text-lo:        #8A8798;
+}
+
+/* Subtle glow behind the content so the dark background is not dead flat. */
+.stage-root {
+    -fx-background-color:
+        radial-gradient(center 50% 8%, radius 78%, #1B1626 0%, ink-bg 68%);
+}
+
+/* ── header ─────────────────────────────────────────────────────────── */
+
+.header {
+    -fx-padding: 14 26 14 26;
+    -fx-border-color: transparent transparent ink-line transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.wordmark {
+    -fx-font-size: 21px;
+    -fx-font-weight: bold;
+    -fx-text-fill: text-hi;
+}
+
+.wordmark-accent {
+    -fx-font-size: 21px;
+    -fx-font-weight: bold;
+    -fx-text-fill: accent;
+}
+
+.tagline {
+    -fx-font-size: 11px;
+    -fx-text-fill: text-lo;
+}
+
+/* Reader status pill, top right. */
+.status-pill {
+    -fx-background-color: ink-surface;
+    -fx-background-radius: 999;
+    -fx-border-color: ink-line;
+    -fx-border-radius: 999;
+    -fx-border-width: 1;
+    -fx-padding: 7 15 7 12;
+}
+
+.status-dot {
+    -fx-fill: teal;
+}
+
+.status-dot-idle {
+    -fx-fill: text-lo;
+}
+
+.status-text {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: text-lo;
+}
+
+/* ── selection grid ─────────────────────────────────────────────────── */
+
+.screen-title {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-text-fill: text-lo;
+}
+
+.drink-grid {
+    -fx-padding: 4 26 10 26;
+}
+
+/*
+ * The drink tile. Styled as a Button rather than a VBox+handler so it gets
+ * keyboard focus, accessibility and press semantics for free.
+ */
+.drink-tile {
+    -fx-background-color: ink-surface;
+    -fx-background-radius: 16;
+    -fx-border-color: ink-line;
+    -fx-border-radius: 16;
+    -fx-border-width: 1;
+    -fx-padding: 8 10 10 10;
+    -fx-cursor: hand;
+    -fx-content-display: top;
+}
+
+.drink-tile:hover {
+    -fx-background-color: ink-raised;
+    -fx-border-color: derive(accent, -35%);
+}
+
+/* The important one on a touchscreen: unmistakable press feedback. */
+.drink-tile:pressed {
+    -fx-background-color: #2A2338;
+    -fx-border-color: accent;
+    -fx-border-width: 2;
+    -fx-padding: 7 9 9 9; /* compensate for the thicker border, no size jump */
+}
+
+.drink-tile:focused {
+    -fx-border-color: accent;
+}
+
+.drink-name {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-text-fill: text-hi;
+}
+
+.drink-price {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: accent;
+}
+
+/* ── payment screen ─────────────────────────────────────────────────── */
+
+.pay-headline {
+    -fx-font-size: 30px;
+    -fx-font-weight: bold;
+    -fx-text-fill: text-hi;
+}
+
+.pay-sub {
+    -fx-font-size: 15px;
+    -fx-text-fill: text-lo;
+}
+
+.pay-amount {
+    -fx-font-size: 46px;
+    -fx-font-weight: bold;
+    -fx-text-fill: teal;
+}
+
+.pay-item {
+    -fx-font-size: 17px;
+    -fx-text-fill: text-hi;
+}
+
+/* Concentric rings that pulse outward while waiting for a tap. */
+.nfc-ring {
+    -fx-fill: transparent;
+    -fx-stroke: accent;
+    -fx-stroke-width: 2;
+}
+
+.nfc-core {
+    -fx-fill: ink-surface;
+    -fx-stroke: accent;
+    -fx-stroke-width: 2.5;
+}
+
+.nfc-glyph {
+    -fx-fill: accent;
+}
+
+.nfc-wave {
+    -fx-fill: transparent;
+    -fx-stroke: accent;
+    -fx-stroke-width: 2.5;
+    -fx-stroke-line-cap: round;
+}
+
+/* ── buttons ────────────────────────────────────────────────────────── */
+
+.btn-ghost {
+    -fx-background-color: transparent;
+    -fx-border-color: ink-line;
+    -fx-border-radius: 999;
+    -fx-background-radius: 999;
+    -fx-border-width: 1.5;
+    -fx-text-fill: text-lo;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-padding: 13 34 13 34;
+    -fx-cursor: hand;
+}
+
+.btn-ghost:hover {
+    -fx-border-color: danger;
+    -fx-text-fill: danger;
+}
+
+.btn-ghost:pressed {
+    -fx-background-color: derive(danger, -70%);
+    -fx-border-color: danger;
+    -fx-text-fill: danger;
+}
+
+/* Deliberately understated — it is a bench-testing affordance, not a feature. */
+.btn-dev {
+    -fx-background-color: transparent;
+    -fx-border-color: #33333F;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+    -fx-border-width: 1;
+    -fx-text-fill: #55556A;
+    -fx-font-size: 11px;
+    -fx-padding: 7 14 7 14;
+    -fx-cursor: hand;
+}
+
+.btn-dev:hover {
+    -fx-text-fill: text-lo;
+    -fx-border-color: text-lo;
+}
+
+/* ── preparation screen ─────────────────────────────────────────────── */
+
+.prep-headline {
+    -fx-font-size: 28px;
+    -fx-font-weight: bold;
+    -fx-text-fill: text-hi;
+}
+
+.prep-step {
+    -fx-font-size: 15px;
+    -fx-text-fill: teal;
+}
+
+.brew-bar {
+    -fx-pref-height: 8;
+    -fx-accent: accent;
+}
+
+.brew-bar > .track {
+    -fx-background-color: ink-surface;
+    -fx-background-radius: 999;
+    -fx-border-color: ink-line;
+    -fx-border-radius: 999;
+    -fx-border-width: 1;
+}
+
+.brew-bar > .bar {
+    -fx-background-color: linear-gradient(to right, accent-dim, accent);
+    -fx-background-radius: 999;
+    -fx-background-insets: 0;
+}
+
+/* ── result screen ──────────────────────────────────────────────────── */
+
+.result-headline {
+    -fx-font-size: 32px;
+    -fx-font-weight: bold;
+    -fx-text-fill: text-hi;
+}
+
+.result-headline-error {
+    -fx-font-size: 30px;
+    -fx-font-weight: bold;
+    -fx-text-fill: danger;
+}
+
+.result-detail {
+    -fx-font-size: 16px;
+    -fx-text-fill: text-lo;
+}
+
+/* Balance before -> after, on the receipt panel. */
+.balance-panel {
+    -fx-background-color: ink-surface;
+    -fx-background-radius: 14;
+    -fx-border-color: ink-line;
+    -fx-border-radius: 14;
+    -fx-border-width: 1;
+    -fx-padding: 16 30 16 30;
+}
+
+.balance-label {
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-text-fill: text-lo;
+}
+
+.balance-before {
+    -fx-font-size: 21px;
+    -fx-text-fill: text-lo;
+    -fx-strikethrough: true;
+}
+
+.balance-after {
+    -fx-font-size: 27px;
+    -fx-font-weight: bold;
+    -fx-text-fill: teal;
+}
+
+.balance-arrow {
+    -fx-font-size: 19px;
+    -fx-text-fill: accent;
+}

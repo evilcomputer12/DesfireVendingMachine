@@ -9,9 +9,11 @@
     <version>1.0-SNAPSHOT</version>
 
     <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <javafx.version>17.0.2</javafx.version>
+        <junit.version>5.10.2</junit.version>
     </properties>
 
     <dependencies>
@@ -25,6 +27,13 @@
             <artifactId>javafx-fxml</artifactId>
             <version>${javafx.version}</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -36,6 +45,17 @@
                 <configuration>
                     <mainClass>com.midnightbrewer.ui.MainApp</mainClass>
                 </configuration>
+            </plugin>
+
+            <!--
+              The payment tests are plain JUnit and touch no JavaFX classes,
+              so they run headless without a display. Keep it that way: tests
+              that need a running FX toolkit cannot run in CI on the Pi.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
             </plugin>
         </plugins>
     </build>
