@@ -63,6 +63,16 @@ public class UIController {
         selectDrink("Macchiato - $3.50");
     }
 
+    @FXML
+    private void handleSelectFlatWhite() {
+        selectDrink("Flat White - $3.00");
+    }
+
+    @FXML
+    private void handleSelectColdBrew() {
+        selectDrink("Cold Brew - $3.50");
+    }
+
     private void selectDrink(String drink) {
         this.selectedDrink = drink;
         selectedItemLabel.setText("Selected: " + drink);
