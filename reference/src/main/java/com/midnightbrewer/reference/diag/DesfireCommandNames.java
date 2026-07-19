@@ -28,7 +28,7 @@ final class DesfireCommandNames {
             case 0x1A: return "AuthenticateISO";
             case 0x71: return "AuthenticateEV2First";
             case 0x77: return "AuthenticateEV2NonFirst";
-            case 0xAF: return "  └ continuation";
+            case 0xAF: return "  +-> continuation";
             case 0x45: return "GetKeySettings";
             case 0x64: return "GetKeyVersion";
             case 0xF5: return "GetFileSettings";
