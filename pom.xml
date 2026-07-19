@@ -14,6 +14,7 @@
         <maven.compiler.target>17</maven.compiler.target>
         <javafx.version>17.0.2</javafx.version>
         <junit.version>5.10.2</junit.version>
+        <pi4j.version>3.0.2</pi4j.version>
     </properties>
 
     <dependencies>
@@ -33,6 +34,42 @@
             <artifactId>junit-jupiter</artifactId>
             <version>${junit.version}</version>
             <scope>test</scope>
+        </dependency>
+
+        <!--
+          Pi4J: SPI to the RC522 and a GPIO line for its RST pin.
+
+          The two plugins are runtime-scoped on purpose. Pi4J discovers
+          providers on the classpath at startup, and nothing you compile
+          should import them directly -- if your code names a provider class,
+          it can no longer be built or unit-tested off the Pi.
+
+          linuxfs talks to /dev/spidev directly, and gpiod uses libgpiod,
+          which is the correct GPIO interface on kernel 6.x (the old sysfs
+          interface this Pi's kernel no longer exposes).
+        -->
+        <dependency>
+            <groupId>com.pi4j</groupId>
+            <artifactId>pi4j-core</artifactId>
+            <version>${pi4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.pi4j</groupId>
+            <artifactId>pi4j-plugin-linuxfs</artifactId>
+            <version>${pi4j.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.pi4j</groupId>
+            <artifactId>pi4j-plugin-gpiod</artifactId>
+            <version>${pi4j.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.13</version>
+            <scope>runtime</scope>
         </dependency>
     </dependencies>
 
