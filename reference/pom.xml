@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      Deliberately standalone: this module declares its own groupId/version
+      rather than inheriting a parent. It is a reference implementation meant
+      to be read, built and copied on its own, and a parent POM would drag the
+      JavaFX kiosk's build configuration in with it.
+    -->
+    <groupId>com.midnightbrewer</groupId>
+    <artifactId>midnight-reference</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>Midnight Brewer RC522 reference driver</name>
+    <description>
+        Object-oriented Java port of the STM32 RC522 / ISO 14443-4 driver
+        (nucleof411re/Core/Src/RC522.c). Protocol logic is testable without
+        hardware; only the SPI transport touches Pi4J.
+    </description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <junit.version>5.10.2</junit.version>
+        <pi4j.version>3.0.2</pi4j.version>
+    </properties>
+
+    <dependencies>
+        <!--
+          Pi4J discovers its I/O providers on the classpath at startup, so the
+          two plugins are runtime-scoped on purpose: nothing in src/main/java
+          may import a provider class. Keeping that rule is what lets the whole
+          protocol stack compile and unit-test on a laptop with no Pi attached.
+
+          linuxfs drives /dev/spidev directly; gpiod uses libgpiod, which is
+          the correct GPIO interface on the Pi's 6.x kernel (the old sysfs
+          interface is gone).
+        -->
+        <dependency>
+            <groupId>com.pi4j</groupId>
+            <artifactId>pi4j-core</artifactId>
+            <version>${pi4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.pi4j</groupId>
+            <artifactId>pi4j-plugin-linuxfs</artifactId>
+            <version>${pi4j.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.pi4j</groupId>
+            <artifactId>pi4j-plugin-gpiod</artifactId>
+            <version>${pi4j.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.13</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.2.0</version>
+                <configuration>
+                    <mainClass>com.midnightbrewer.reference.ReferenceMain</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
