@@ -153,6 +153,7 @@ public final class Rc522Probe {
             // and an intermittent RF stack is worse than a broken one.
             System.out.println();
             System.out.println("-- card detection (REQA, WUPA fallback) x20 --");
+            setResponseTimeout(spi, POLL_TIMEOUT_TICKS);
             long tPoll0 = System.nanoTime();
             int hits = 0;
             byte[] lastAtqa = null;
@@ -168,6 +169,7 @@ public final class Rc522Probe {
             System.out.printf("[timing] 20 polls: %d ms total, %d ms each "
                             + "(600 ms of that is the deliberate 30 ms sleeps)%n",
                     ms(tPoll0, System.nanoTime()), ms(tPoll0, System.nanoTime()) / 20);
+            setResponseTimeout(spi, APDU_TIMEOUT_TICKS);
             if (lastAtqa != null) {
                 System.out.println("ATQA = " + hex(lastAtqa) + describeAtqa(lastAtqa));
             }
@@ -295,6 +297,30 @@ public final class Rc522Probe {
      * looks exactly like a flaky antenna. WUPA (0x52) is answered from IDLE
      * and HALT, which is why the fallback exists.
      */
+    /**
+     * Sets the RC522's response timer.
+     *
+     * <p>One tick is 0.5 ms with the prescaler {@code MFRC522_Init} installs,
+     * so {@code ticks} is milliseconds x2. The C keeps two settings for this
+     * reason: 600 (~300 ms) as its default and 3999 (~2 s) around DESFire
+     * non-volatile writes.
+     *
+     * <p>300 ms is far too long for a presence poll. A card that is going to
+     * answer REQA or WUPA does so in well under a millisecond, so the only
+     * thing the long timer buys during polling is a 300 ms wait to be told
+     * "no card", which is precisely what a poll does most of the time.
+     */
+    private static void setResponseTimeout(Spi spi, int ticks) {
+        writeRegister(spi, T_RELOAD_REG_H, (byte) ((ticks >> 8) & 0xFF));
+        writeRegister(spi, T_RELOAD_REG_L, (byte) (ticks & 0xFF));
+    }
+
+    /** ~5 ms: generous for a card that answers in microseconds. */
+    private static final int POLL_TIMEOUT_TICKS = 10;
+
+    /** ~300 ms, the C's default, needed once real APDUs start flowing. */
+    private static final int APDU_TIMEOUT_TICKS = 600;
+
     private static byte[] pollForCard(Spi spi) {
         /*
          * WUPA first, REQA only as a fallback -- the opposite order to the C.
