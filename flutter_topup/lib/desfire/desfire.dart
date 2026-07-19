@@ -7,5 +7,6 @@ library;
 export 'desfire_card.dart';
 export 'desfire_crypto.dart';
 export 'desfire_exceptions.dart';
+export 'desfire_legacy_crypto.dart';
 export 'desfire_session.dart';
 export 'value_file.dart';

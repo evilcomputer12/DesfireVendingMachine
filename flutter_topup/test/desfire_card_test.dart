@@ -104,12 +104,16 @@ void main() {
       expect(fake.sentApdus.single, fromHex('905a00000303020100'));
     });
 
-    test('reports the card status for an unknown AID', () async {
+    test('an unknown AID is reported as "card not provisioned"', () async {
       final card = clientFor(newFakeCard());
       await expectLater(
         card.selectApplication(0x999999),
         throwsA(
-          isA<CardStatusException>().having((e) => e.status, 'status', 0xA0),
+          isA<CardNotProvisionedException>().having(
+            (e) => e.applicationId,
+            'applicationId',
+            0x999999,
+          ),
         ),
       );
     });
@@ -505,18 +509,13 @@ void main() {
         Uint8List.fromList(List<int>.filled(16, 0x11)),
       );
 
-      // The fake card does not implement CreateValueFile, so it answers
-      // "INS not supported"; what matters here is the framing we emitted.
-      await expectLater(
-        card.createValueFile(
-          const ValueFileSettings(
-            fileNo: fileNo,
-            lowerLimit: 0,
-            upperLimit: 100000,
-            initialValue: 0,
-          ),
+      await card.createValueFile(
+        const ValueFileSettings(
+          fileNo: fileNo,
+          lowerLimit: 0,
+          upperLimit: 100000,
+          initialValue: 0,
         ),
-        throwsA(isA<CardStatusException>()),
       );
 
       final apdu = fake.sentApdus.last;

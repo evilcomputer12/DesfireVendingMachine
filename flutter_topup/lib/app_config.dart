@@ -45,6 +45,38 @@ class AppConfig {
   /// Highest balance the card will hold, in cents (1000.00 EUR).
   static const int upperLimitCents = 100000;
 
+  /// Number of keys the application is created with.
+  ///
+  /// Same expression as `df_setup_desfire`:
+  /// `numKeys = (userKeyNo == 0) ? 1 : userKeyNo + 1`. With [userKeyNo] of 2
+  /// that is 3 keys (0, 1, 2) — key 1 is unused but has to exist for key 2 to
+  /// be addressable.
+  static int get numApplicationKeys => userKeyNo == 0 ? 1 : userKeyNo + 1;
+
+  /// PICC (card-level) master key, `DESFIRE_PICC_KEY` in `desfiire.c`: the
+  /// factory default of 16 zero bytes.
+  ///
+  /// Used **read-only**, to authenticate at card level so that
+  /// `CreateApplication` is permitted. Provisioning never calls `ChangeKey`
+  /// against key 0 at PICC level: leaving the card master key at its factory
+  /// value means this app can never lock anybody out of their own card, and
+  /// means a card it touched can still be re-personalised by any other tool.
+  static Uint8List get piccMasterKey => Uint8List(16);
+
+  /// Whether tapping an unprovisioned card may skip the confirmation dialog.
+  ///
+  /// Provisioning is **never** silent or automatic regardless of this flag: the
+  /// user always has to press "Set up this card". What this flag removes is
+  /// only the extra "are you sure" step, for bench sessions where somebody is
+  /// personalising a stack of known-blank cards.
+  ///
+  /// Default `false`, and it must stay `false` in anything a member of the
+  /// public taps, because the card on the reader may well be an office badge
+  /// or a transit card that merely happens to be DESFire. Writing a new
+  /// application onto one of those without being asked is not recoverable by
+  /// this app.
+  static const bool autoProvision = false;
+
   /// BENCH KEY — application master key, `DESFIRE_APP_MASTER_KEY` (16 x 0x11).
   static Uint8List get appMasterKey =>
       Uint8List.fromList(List<int>.filled(16, 0x11));

@@ -4,10 +4,12 @@ library;
 import 'package:flutter/material.dart';
 
 import '../desfire/desfire_card.dart';
+import '../desfire/desfire_exceptions.dart';
 import '../desfire/value_file.dart';
 import '../nfc/card_gateway.dart';
 import '../nfc/nfc_service.dart';
 import 'scan_sheet.dart';
+import 'setup_card_screen.dart';
 import 'theme.dart';
 import 'topup_screen.dart';
 import 'widgets/balance_display.dart';
@@ -28,6 +30,11 @@ class _HomeScreenState extends State<HomeScreen> {
   NfcAvailability? _availability;
   bool _busy = false;
 
+  /// Set when the last scan hit a card that does not carry the application.
+  /// Purely an offer: nothing is written until the user goes through
+  /// [SetupCardScreen] and confirms.
+  CardNotProvisionedException? _needsSetup;
+
   @override
   void initState() {
     super.initState();
@@ -46,7 +53,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _readBalance() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _needsSetup = null;
+    });
+    CardNotProvisionedException? unprovisioned;
     final snapshot = await showScanSheet<CardSnapshot>(
       context: context,
       title: 'Read balance',
@@ -54,11 +65,30 @@ class _HomeScreenState extends State<HomeScreen> {
       operation: () => widget.gateway.readBalance(identify: true),
       successMessage: (s) => '€${formatCents(s.balanceCents)}',
       onCancel: widget.gateway.cancel,
+      // Retrying cannot help a card that has never been set up, so close the
+      // sheet and offer the setup flow instead of a "Try again" button.
+      isTerminal: (error) => error is CardNotProvisionedException,
+      onTerminalError: (error) =>
+          unprovisioned = error as CardNotProvisionedException,
     );
     if (!mounted) return;
     setState(() {
       _busy = false;
+      _needsSetup = unprovisioned;
       if (snapshot != null) _snapshot = snapshot;
+    });
+  }
+
+  Future<void> _openSetup() async {
+    final snapshot = await Navigator.of(context).push<CardSnapshot>(
+      MaterialPageRoute(
+        builder: (_) => SetupCardScreen(gateway: widget.gateway),
+      ),
+    );
+    if (!mounted || snapshot == null) return;
+    setState(() {
+      _snapshot = snapshot;
+      _needsSetup = null;
     });
   }
 
@@ -105,6 +135,13 @@ class _HomeScreenState extends State<HomeScreen> {
               _NfcWarning(availability: _availability!),
               const SizedBox(height: 20),
             ],
+            if (_needsSetup != null) ...[
+              _NotSetUpCard(
+                error: _needsSetup!,
+                onSetUp: nfcReady && !_busy ? _openSetup : null,
+              ),
+              const SizedBox(height: 20),
+            ],
             BalanceCard(
               balanceCents: _snapshot?.balanceCents,
               uidHex: _snapshot?.uidHex,
@@ -138,6 +175,77 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Shown after a scan lands on a card that has no top-up application.
+///
+/// This state exists so that meeting an unknown card is a *question*, not an
+/// action: the card may not be the user's to write to. The button leads to
+/// [SetupCardScreen], which explains what provisioning does and asks again
+/// before touching the card.
+class _NotSetUpCard extends StatelessWidget {
+  const _NotSetUpCard({required this.error, required this.onSetUp});
+
+  final CardNotProvisionedException error;
+  final VoidCallback? onSetUp;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: KioskColors.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: KioskColors.primary.withValues(alpha: 0.45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.credit_card_off_rounded,
+                color: KioskColors.primary,
+                size: 24,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'This card is not set up',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'The card responded, but it has no top-up application on '
+                      'it (${error.applicationIdHex}). If it is your card, it '
+                      'can be set up now.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: KioskColors.onSurfaceMuted,
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: onSetUp,
+            icon: const Icon(Icons.auto_fix_high_rounded),
+            label: const Text('Set up this card'),
+          ),
+        ],
       ),
     );
   }

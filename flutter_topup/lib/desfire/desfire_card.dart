@@ -17,6 +17,7 @@ import 'dart:typed_data';
 
 import 'desfire_crypto.dart';
 import 'desfire_exceptions.dart';
+import 'desfire_legacy_crypto.dart';
 import 'desfire_session.dart';
 import 'value_file.dart';
 
@@ -34,8 +35,31 @@ class DesfireCommand {
   /// AuthenticateEV2First (AES-128).
   static const int authenticateEv2First = 0x71;
 
+  /// Authenticate, legacy / D40 (DES or 2K3DES).
+  static const int authenticateLegacy = 0x0A;
+
+  /// AuthenticateISO (3K3DES).
+  static const int authenticateIso = 0x1A;
+
+  /// CreateApplication.
+  static const int createApplication = 0xCA;
+
+  /// ChangeKey.
+  static const int changeKey = 0xC4;
+
   /// Additional frame / continue.
   static const int additionalFrame = 0xAF;
+
+  // NOTE: FormatPICC (0xFC) is deliberately absent, and must stay absent.
+  //
+  // The reference C library has it (`df_format_picc`) and `df_setup_desfire`
+  // calls it as step 1 via `df_full_format`, which erases every application
+  // and every file on the card. That is fine for a bench script aimed at a
+  // known blank card. It is not fine here: this app provisions whatever card
+  // the user happens to tap, and that card may be an office badge or a transit
+  // card. A top-up app that meets an unrecognised card must never be able to
+  // wipe it. `CardGateway.provisionCard` implements steps 2-7 of
+  // `df_setup_desfire` only. Do not add 0xFC.
 
   // --- value-file commands, new in this port ---
   /// CreateValueFile.
@@ -72,6 +96,15 @@ class DesfireStatus {
 
   /// Value would leave the file's configured limits.
   static const int boundaryError = 0xBE;
+
+  /// Requested application not found — the AID is not on this card.
+  static const int applicationNotFound = 0xA0;
+
+  /// Requested file not found inside the selected application.
+  static const int fileNotFound = 0xF0;
+
+  /// Authentication error.
+  static const int authenticationError = 0xAE;
 
   /// File or application already exists.
   static const int duplicateError = 0xDE;
@@ -210,6 +243,22 @@ class TopUpResult {
       'TopUpResult($previousBalance + $amount = $newBalance cents)';
 }
 
+/// Settle time given to the card before a `ChangeKey`.
+///
+/// `DF_NV_WRITE_DELAY_MS` in `desfire_cmd.c` is 75 ms, and the reference
+/// firmware does install the delay callback (`platform_sleep_ms` in
+/// `desfiire.c`), so this pause is part of the configuration that is known to
+/// work against real cards. A key change is a non-volatile write and some
+/// cards need a moment before the next command; the failure mode without it is
+/// an intermittent `0xEE` mid-provisioning.
+const Duration kDefaultNvWriteDelay = Duration(milliseconds: 75);
+
+/// AID of the card-level "PICC" application — `APP_PICC` in the C library.
+///
+/// Selecting it moves to card level, where the PICC master key governs and
+/// `CreateApplication` is permitted.
+const int kPiccApplicationId = 0x000000;
+
 /// Builds an ISO 7816-4 wrapped DESFire APDU: `90 CMD 00 00 [Lc DATA] 00`.
 ///
 /// Port of `_build_apdu`. When [data] is empty the Lc byte is omitted entirely,
@@ -254,14 +303,22 @@ DesfireResponse parseResponse(Uint8List raw) {
 
 /// High-level DESFire EV2/EV3 card interface.
 class DesfireCard {
-  DesfireCard(this.transceiver, {RandomSource? randomSource, this.logger})
-    : _random = randomSource ?? SecureRandomSource();
+  DesfireCard(
+    this.transceiver, {
+    RandomSource? randomSource,
+    this.logger,
+    this.nvWriteDelay = kDefaultNvWriteDelay,
+  }) : _random = randomSource ?? SecureRandomSource();
 
   /// The byte transport in use.
   final Transceiver transceiver;
 
   /// Optional trace sink.
   final DesfireLogger? logger;
+
+  /// Settle time given to the card before a key write. See
+  /// [kDefaultNvWriteDelay]. Tests pass [Duration.zero].
+  final Duration nvWriteDelay;
 
   final RandomSource _random;
 
@@ -355,15 +412,387 @@ class DesfireCard {
   /// `SelectApplication` (0x5A). [aid] is the 3-byte AID in the low 24 bits,
   /// transmitted little-endian. Selecting an application always drops any
   /// existing session.
+  ///
+  /// A `0xA0` status means the AID is simply not on this card, which is the
+  /// normal state of a blank card and of any card belonging to somebody else.
+  /// It is raised as [CardNotProvisionedException] rather than a generic
+  /// [CardStatusException] so callers can offer to set the card up instead of
+  /// showing a hex error code.
   Future<void> selectApplication(int aid) async {
     final data = Uint8List.fromList([
       aid & 0xFF,
       (aid >> 8) & 0xFF,
       (aid >> 16) & 0xFF,
     ]);
-    await _sendExpectOk(DesfireCommand.selectApplication, data);
+    final response = await _send(DesfireCommand.selectApplication, data);
+    if (response.status == DesfireStatus.applicationNotFound) {
+      _session?.invalidate();
+      _session = null;
+      throw CardNotProvisionedException(applicationId: aid);
+    }
+    if (response.status != DesfireStatus.ok) {
+      throw CardStatusException(
+        response.status,
+        command: DesfireCommand.selectApplication,
+      );
+    }
     _session?.invalidate();
     _session = null;
+  }
+
+  // ---------------------------------------------------------------------
+  // Legacy (pre-AES) authentication — only needed to reach a blank card
+  // ---------------------------------------------------------------------
+
+  /// `Authenticate` (0x0A), the legacy D40 handshake, with a 16-byte
+  /// DES/2K3DES key. Port of `df_authenticate_legacy`.
+  ///
+  /// Structurally this is *not* a cut-down EV2 handshake. There is no
+  /// transaction identifier and no command counter, the nonces are 8 bytes
+  /// rather than 16, and — the part that trips people up — the reader applies
+  /// the DES **decrypt** primitive when sending. Accordingly this method
+  /// **does not install a session** (mirroring the C's "session stays inactive
+  /// — legacy auth has no EV2 MAC/TI counter"): commands issued afterwards go
+  /// out in plain, which is exactly what `CreateApplication` needs.
+  ///
+  /// [cbcSendDecrypt] selects the step-2 construction:
+  ///
+  /// * `true` (default) — the D40 rule, `c[i] = DEC(p[i] XOR c[i-1])`.
+  /// * `false` — the ISO-style `c[i] = ENC(p[i] XOR c[i-1])` that
+  ///   `df_authenticate_legacy` actually emits.
+  ///
+  /// For the 16-zero-byte factory key the two are byte-identical, because an
+  /// all-zero DES key is a weak key and `E_K == D_K` for it; see
+  /// [desfireLegacyCbcSend]. [authenticatePiccFactory] tries both so a card
+  /// with a non-default legacy key still has a chance of working.
+  ///
+  /// Like the C, a `0x00` status is accepted as success even if the card's
+  /// `RndA'` echo cannot be reproduced — the echo is only ever logged. The
+  /// authentication that matters is the card's, not ours: nothing here trusts
+  /// data the card returns, it only needs the card to grant PICC-level rights
+  /// for the subsequent `CreateApplication`.
+  Future<void> authenticateLegacy(
+    int keyNo,
+    Uint8List key16, {
+    bool cbcSendDecrypt = true,
+  }) async {
+    _session?.invalidate();
+    _session = null;
+
+    if (key16.length != 16) {
+      throw const InvalidParameterException(
+        'Legacy DES/2K3DES key must be 16 bytes',
+      );
+    }
+
+    final step1 = await _send(
+      DesfireCommand.authenticateLegacy,
+      Uint8List.fromList([keyNo & 0xFF]),
+    );
+    if (step1.status != DesfireStatus.additionalFrame ||
+        step1.body.length != kDesBlockSize) {
+      throw AuthenticationFailedException(
+        'Authenticate (0x0A) step 1 refused: '
+        '${describeDesfireStatus(step1.status)} '
+        '(${step1.body.length} challenge bytes, expected 8)',
+      );
+    }
+
+    final encRndB = Uint8List.fromList(step1.body.sublist(0, kDesBlockSize));
+    final zeroIv = Uint8List(kDesBlockSize);
+    final rndB = desfireLegacyCbcReceive(key16, zeroIv, encRndB);
+    final rndA = _random.nextBytes(kDesBlockSize);
+    final rndBRot = rotateLeft1(rndB);
+
+    final plain = Uint8List(2 * kDesBlockSize)
+      ..setRange(0, kDesBlockSize, rndA)
+      ..setRange(kDesBlockSize, 2 * kDesBlockSize, rndBRot);
+
+    // IV for step 2 is the card's challenge ciphertext, not zero.
+    final token = cbcSendDecrypt
+        ? desfireLegacyCbcSend(key16, encRndB, plain)
+        : des3CbcEncrypt(key16, encRndB, plain);
+
+    final step2 = await _send(DesfireCommand.additionalFrame, token);
+    if (step2.status != DesfireStatus.ok) {
+      throw AuthenticationFailedException(
+        'Authenticate (0x0A) step 2 refused: '
+        '${describeDesfireStatus(step2.status)} — wrong PICC master key, or '
+        'the card wants a different legacy key type.',
+      );
+    }
+
+    if (step2.body.length >= kDesBlockSize) {
+      final received = desfireLegacyCbcReceive(
+        key16,
+        Uint8List.sublistView(token, kDesBlockSize, 2 * kDesBlockSize),
+        Uint8List.fromList(step2.body.sublist(0, kDesBlockSize)),
+      );
+      _log(
+        bytesEqual(rotateLeft1(rndA), received)
+            ? 'Authenticate (0x0A) OK — RndA echo verified'
+            : 'Authenticate (0x0A) OK — card accepted, RndA echo not '
+                  'reproducible with this construction',
+      );
+    } else {
+      _log('Authenticate (0x0A) OK — card accepted');
+    }
+  }
+
+  /// `AuthenticateISO` (0x1A) with a 24-byte 3K3DES key. Port of
+  /// `df_authenticate_iso`.
+  ///
+  /// Same shape as [authenticateLegacy] but with ordinary CBC in both
+  /// directions and a three-key DES engine. Also installs no session.
+  Future<void> authenticateIso(int keyNo, Uint8List key24) async {
+    _session?.invalidate();
+    _session = null;
+
+    if (key24.length != 24) {
+      throw const InvalidParameterException('3K3DES key must be 24 bytes');
+    }
+
+    final step1 = await _send(
+      DesfireCommand.authenticateIso,
+      Uint8List.fromList([keyNo & 0xFF]),
+    );
+    if (step1.status != DesfireStatus.additionalFrame ||
+        step1.body.length != kDesBlockSize) {
+      throw AuthenticationFailedException(
+        'AuthenticateISO (0x1A) step 1 refused: '
+        '${describeDesfireStatus(step1.status)} '
+        '(${step1.body.length} challenge bytes, expected 8)',
+      );
+    }
+
+    final encRndB = Uint8List.fromList(step1.body.sublist(0, kDesBlockSize));
+    final zeroIv = Uint8List(kDesBlockSize);
+    final rndB = des3k3CbcDecrypt(key24, zeroIv, encRndB);
+    final rndA = _random.nextBytes(kDesBlockSize);
+    final rndBRot = rotateLeft1(rndB);
+
+    final plain = Uint8List(2 * kDesBlockSize)
+      ..setRange(0, kDesBlockSize, rndA)
+      ..setRange(kDesBlockSize, 2 * kDesBlockSize, rndBRot);
+    final token = des3k3CbcEncrypt(key24, encRndB, plain);
+
+    final step2 = await _send(DesfireCommand.additionalFrame, token);
+    if (step2.status != DesfireStatus.ok) {
+      throw AuthenticationFailedException(
+        'AuthenticateISO (0x1A) step 2 refused: '
+        '${describeDesfireStatus(step2.status)} — wrong PICC master key.',
+      );
+    }
+    _log('AuthenticateISO (0x1A) OK — card accepted');
+  }
+
+  /// Authenticates at PICC level with a factory master key, trying each key
+  /// type a card generation might be using. Mirrors `_auth_picc_factory`.
+  ///
+  /// The factory PICC master key is 16 zero bytes on every DESFire, but its
+  /// declared *type* is not constant across generations: older cards want the
+  /// D40 handshake (0x0A), some EV1/EV2 cards are shipped or left configured
+  /// for 3K3DES (0x1A, key `key16 || key16[0..8]`), and a card that has been
+  /// through an AES personalisation wants `AuthenticateEV2First` (0x71). The C
+  /// tries all three in that order and so does this.
+  ///
+  /// Only [DesfireCommand.authenticateEv2First] leaves a usable session
+  /// behind; after either legacy path [isAuthenticated] stays false and
+  /// subsequent commands go out in plain.
+  Future<void> authenticatePiccFactory(Uint8List key16) async {
+    if (key16.length != 16) {
+      throw const InvalidParameterException('PICC master key must be 16 bytes');
+    }
+    final key24 = Uint8List(24)
+      ..setRange(0, 16, key16)
+      ..setRange(16, 24, key16);
+
+    final attempts = <String, Future<void> Function()>{
+      'Authenticate (0x0A), D40 CBC-send-decrypt': () =>
+          authenticateLegacy(0, key16),
+      'Authenticate (0x0A), CBC-encrypt (as df_authenticate_legacy)': () =>
+          authenticateLegacy(0, key16, cbcSendDecrypt: false),
+      'AuthenticateISO (0x1A), 3K3DES': () => authenticateIso(0, key24),
+      'AuthenticateEV2First (0x71), AES-128': () async {
+        await authenticateEv2First(0, key16);
+      },
+    };
+
+    final failures = <String>[];
+    for (final entry in attempts.entries) {
+      try {
+        await entry.value();
+        _log('PICC factory auth succeeded via ${entry.key}');
+        return;
+      } on TransceiveException {
+        // The link is gone; retrying a different key type cannot help and
+        // would only keep the user holding a card against a dead session.
+        rethrow;
+      } on DesfireException catch (e) {
+        _log('PICC factory auth failed via ${entry.key}: ${e.message}');
+        failures.add('${entry.key}: ${e.message}');
+      }
+    }
+
+    throw AuthenticationFailedException(
+      'No PICC-level authentication succeeded with the configured card master '
+      'key. Tried:\n${failures.join('\n')}',
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Application and key management
+  // ---------------------------------------------------------------------
+
+  /// `CreateApplication` (0xCA). Port of `df_create_application`.
+  ///
+  /// Command data is exactly the C's five bytes:
+  /// `[aidLo, aidMid, aidHi, 0xEF, 0x80 | numKeys]`. `0xEF` is the key-settings
+  /// byte and `0x80` in the final byte selects **AES** application keys, which
+  /// is what lets everything after this point use `AuthenticateEV2First`.
+  ///
+  /// The 8-byte command CMAC is appended only when an EV2 session is live. It
+  /// normally is not: this command runs straight after a legacy PICC
+  /// authentication, which installs no session, so the command goes out plain.
+  ///
+  /// A `0xDE` (DUPLICATE_ERROR) status is treated as success and reported via
+  /// the return value, which is what makes provisioning idempotent — re-running
+  /// it against a card that already has the application is not an error.
+  ///
+  /// Returns true when the application already existed.
+  Future<bool> createApplication(int aid, int numKeys) async {
+    if (numKeys < 1 || numKeys > 14) {
+      throw InvalidParameterException(
+        'An application needs between 1 and 14 keys, not $numKeys',
+      );
+    }
+    final plain = Uint8List.fromList([
+      aid & 0xFF,
+      (aid >> 8) & 0xFF,
+      (aid >> 16) & 0xFF,
+      0xEF,
+      0x80 | (numKeys & 0x0F),
+    ]);
+
+    final s = _session;
+    final live = s != null && s.isActive;
+    final payload = live
+        ? Uint8List.fromList([
+            ...plain,
+            ...s.commandMac(DesfireCommand.createApplication, plain),
+          ])
+        : plain;
+
+    final response = await _send(DesfireCommand.createApplication, payload);
+    if (response.status != DesfireStatus.ok &&
+        response.status != DesfireStatus.duplicateError) {
+      if (live) s.invalidate();
+      throw CardStatusException(
+        response.status,
+        command: DesfireCommand.createApplication,
+      );
+    }
+    if (live) s.incrementCounter();
+
+    final existed = response.status == DesfireStatus.duplicateError;
+    _log(
+      existed
+          ? 'CreateApplication: AID already present, left untouched'
+          : 'CreateApplication: created AID with $numKeys key(s)',
+    );
+    return existed;
+  }
+
+  /// `ChangeKey` (0xC4) in an EV2 session. Port of `df_change_key`.
+  ///
+  /// The cryptogram depends on whether the key being replaced is the one the
+  /// session authenticated with:
+  ///
+  /// * **Same key** — `newKey || keyVersion`, padded to 32 bytes. The card has
+  ///   the old key already, so no proof of possession is needed.
+  /// * **Different key** — `(newKey XOR oldKey) || CRC32(newKey) || keyVersion`,
+  ///   padded. The XOR means the card can only recover `newKey` if the caller
+  ///   really knew `oldKey`, and the CRC is what lets the card check that it
+  ///   did. Byte order here follows the C exactly.
+  ///
+  /// Changing the authenticated key makes the card tear the session down, so
+  /// this method clears the local session too. The caller must re-select the
+  /// application and re-authenticate before doing anything else — that is why
+  /// `df_setup_desfire` has a re-select/re-auth after every key change, and why
+  /// `CardGateway.provisionCard` repeats the dance.
+  Future<void> changeKey({
+    required int keyNo,
+    required Uint8List oldKey,
+    required Uint8List newKey,
+    int keyVersion = 0x01,
+  }) async {
+    final s = _requireSession;
+    if (oldKey.length != 16 || newKey.length != 16) {
+      throw const InvalidParameterException('AES keys must be 16 bytes');
+    }
+
+    // Port of the `ctx->delay(..., DF_NV_WRITE_DELAY_MS)` the C performs here.
+    if (nvWriteDelay > Duration.zero) {
+      await Future<void>.delayed(nvWriteDelay);
+    }
+
+    final changingAuthKey = keyNo == s.authKeyNo;
+    final plain = Uint8List(32);
+    if (changingAuthKey) {
+      plain.setRange(0, 16, newKey);
+      plain[16] = keyVersion & 0xFF;
+      plain[17] = 0x80;
+    } else {
+      for (var i = 0; i < 16; i++) {
+        plain[i] = newKey[i] ^ oldKey[i];
+      }
+      plain.setRange(16, 20, crc32ToBytes(desfireCrc32(newKey)));
+      plain[20] = keyVersion & 0xFF;
+      plain[21] = 0x80;
+    }
+
+    final cryptogram = aesCbcEncrypt(s.sessKeyEnc, s.commandIv, plain);
+    final cmdData = Uint8List.fromList([keyNo & 0xFF, ...cryptogram]);
+    final mac = s.commandMac(DesfireCommand.changeKey, cmdData);
+
+    final response = await _send(
+      DesfireCommand.changeKey,
+      Uint8List.fromList([...cmdData, ...mac]),
+    );
+    if (response.status != DesfireStatus.ok) {
+      s.invalidate();
+      _session = null;
+      throw CardStatusException(
+        response.status,
+        command: DesfireCommand.changeKey,
+      );
+    }
+
+    s.incrementCounter();
+
+    if (changingAuthKey) {
+      s.invalidate();
+      _session = null;
+      _log('ChangeKey($keyNo): done, session invalidated by the card');
+      return;
+    }
+
+    if (response.body.length < 8) {
+      throw ResponseTooShortException(
+        'ChangeKey returned ${response.body.length} bytes; expected a CMAC.',
+      );
+    }
+    final respMac = Uint8List.sublistView(
+      response.body,
+      response.body.length - 8,
+    );
+    if (!s.verifyResponseMac(null, respMac)) {
+      throw const CmacMismatchException(
+        'ChangeKey response CMAC failed — the key state on the card is '
+        'unknown. Re-read the card before writing anything else.',
+      );
+    }
+    _log('ChangeKey($keyNo): done');
   }
 
   /// `AuthenticateEV2First` (0x71) with an AES-128 key.

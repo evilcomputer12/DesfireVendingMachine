@@ -30,6 +30,12 @@ enum ScanPhase {
 /// Returns null when the user cancels or the operation fails. Failures are
 /// rendered inside the sheet with a retry affordance, so the caller only sees
 /// null once the user gives up.
+///
+/// [isTerminal] marks failures that retrying cannot fix, so the sheet closes
+/// straight away and hands the error to [onTerminalError] instead of showing a
+/// "Try again" button. The motivating case is
+/// [CardNotProvisionedException]: tapping the same blank card again will
+/// always fail, and what the user actually needs is the offer to set it up.
 Future<T?> showScanSheet<T>({
   required BuildContext context,
   required String title,
@@ -37,6 +43,8 @@ Future<T?> showScanSheet<T>({
   required Future<T> Function() operation,
   required String Function(T result) successMessage,
   Future<void> Function()? onCancel,
+  bool Function(Object error)? isTerminal,
+  void Function(Object error)? onTerminalError,
 }) {
   return showModalBottomSheet<T>(
     context: context,
@@ -50,6 +58,8 @@ Future<T?> showScanSheet<T>({
       operation: operation,
       successMessage: successMessage,
       onCancel: onCancel,
+      isTerminal: isTerminal,
+      onTerminalError: onTerminalError,
     ),
   );
 }
@@ -61,6 +71,8 @@ class _ScanSheet<T> extends StatefulWidget {
     required this.operation,
     required this.successMessage,
     this.onCancel,
+    this.isTerminal,
+    this.onTerminalError,
   });
 
   final String title;
@@ -68,6 +80,8 @@ class _ScanSheet<T> extends StatefulWidget {
   final Future<T> Function() operation;
   final String Function(T result) successMessage;
   final Future<void> Function()? onCancel;
+  final bool Function(Object error)? isTerminal;
+  final void Function(Object error)? onTerminalError;
 
   @override
   State<_ScanSheet<T>> createState() => _ScanSheetState<T>();
@@ -103,6 +117,13 @@ class _ScanSheetState<T> extends State<_ScanSheet<T>> {
       Navigator.of(context).pop(value);
     } catch (error) {
       if (!mounted) return;
+      if (widget.isTerminal?.call(error) ?? false) {
+        widget.onTerminalError?.call(error);
+        await widget.onCancel?.call();
+        if (!mounted) return;
+        Navigator.of(context).pop();
+        return;
+      }
       final described = _describe(error);
       setState(() {
         _phase = ScanPhase.failure;
@@ -119,6 +140,10 @@ class _ScanSheetState<T> extends State<_ScanSheet<T>> {
         return ('Not enough balance', e.message);
       case LimitExceededException e:
         return ('Card limit reached', e.message);
+      case CardNotProvisionedException e:
+        return ('Card is not set up', e.message);
+      case ProvisioningFailedException e:
+        return ('Setup did not finish', e.message);
       case AuthenticationFailedException e:
         return ('Card not recognised', e.message);
       case CmacMismatchException e:

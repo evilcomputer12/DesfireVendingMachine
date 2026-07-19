@@ -101,6 +101,100 @@ class LimitExceededException extends DesfireException {
       'requested=$requested, upperLimit=$upperLimit)';
 }
 
+/// The card is a working DESFire card, but it does not carry this app's
+/// application — `SelectApplication` returned `0xA0` (APPLICATION_NOT_FOUND).
+///
+/// This is a distinct, *expected* outcome rather than an error: it is what a
+/// blank card, or somebody's office badge, looks like. The UI turns it into a
+/// "this card is not set up" state with an explicit opt-in, never into an
+/// automatic write.
+class CardNotProvisionedException extends DesfireException {
+  const CardNotProvisionedException({
+    required this.applicationId,
+    String? message,
+  }) : super(
+         message ?? 'This card does not have the top-up application on it yet.',
+       );
+
+  /// AID that was looked for and not found.
+  final int applicationId;
+
+  /// The AID as the six-hex-digit form used in the config, e.g. `0x010203`.
+  String get applicationIdHex =>
+      '0x${applicationId.toRadixString(16).padLeft(6, '0').toUpperCase()}';
+
+  @override
+  String toString() =>
+      'CardNotProvisionedException: $message (AID $applicationIdHex)';
+}
+
+/// A provisioning run failed, naming the step that failed.
+///
+/// Provisioning is a long chain of round-trips and the card must stay still
+/// for all of them, so "it failed" is not actionable on its own — [step] is
+/// what tells the user (and the bench log) whether the card moved during the
+/// key change or whether the factory key was simply wrong.
+class ProvisioningFailedException extends DesfireException {
+  ProvisioningFailedException(this.step, this.cause)
+    : super('${step.label} failed: ${_describeCause(cause)}');
+
+  /// The step that failed.
+  final ProvisioningStep step;
+
+  /// The underlying failure.
+  final Object cause;
+
+  static String _describeCause(Object cause) =>
+      cause is DesfireException ? cause.message : cause.toString();
+
+  @override
+  String toString() => 'ProvisioningFailedException: $message';
+}
+
+/// The ordered steps of a provisioning run, used for progress reporting and
+/// for naming the failing step in [ProvisioningFailedException].
+///
+/// These are steps 2–7 of `df_setup_desfire` in the reference C library.
+/// Step 1 of that function is `df_full_format` — a `FormatPICC` (0xFC) that
+/// erases every application on the card — and it is deliberately absent here.
+/// See the comment on `CardGateway.provisionCard`.
+enum ProvisioningStep {
+  /// Checking whether the application is already on the card.
+  probe('Checking the card'),
+
+  /// `SelectApplication(0x000000)` — move to PICC level.
+  selectPicc('Selecting the card root'),
+
+  /// Authenticate with the PICC master key (factory value).
+  authenticatePicc('Authenticating with the card master key'),
+
+  /// `CreateApplication` (0xCA).
+  createApplication('Creating the application'),
+
+  /// `SelectApplication` of the freshly created AID.
+  selectApplication('Selecting the new application'),
+
+  /// Authenticate the new application with its default all-zero key.
+  authenticateDefault('Opening the new application'),
+
+  /// `ChangeKey` for the user key.
+  changeUserKey('Writing the user key'),
+
+  /// `ChangeKey` for the application master key.
+  changeMasterKey('Writing the application master key'),
+
+  /// `CreateValueFile` (0xCC).
+  createValueFile('Creating the balance file'),
+
+  /// Read the balance back to prove the card works.
+  verify('Verifying the card');
+
+  const ProvisioningStep(this.label);
+
+  /// Human-readable description, safe to surface in the UI.
+  final String label;
+}
+
 /// `DF_ERR_CMD` — the card returned a non-OK DESFire status byte (SW2).
 class CardStatusException extends DesfireException {
   CardStatusException(this.status, {this.command})

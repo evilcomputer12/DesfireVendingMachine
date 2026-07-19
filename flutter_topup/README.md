@@ -18,7 +18,7 @@ the value-file commands are new, because the C library does not have them.
 
 | Key | Value | Used for |
 |---|---|---|
-| Application master key (key 0) | `11 11 … 11` | provisioning the value file |
+| Application master key (key 0) | `11 11 … 11` | provisioning the application and value file |
 | Application user key (key 2) | `22 22 … 22` | reading and crediting the balance |
 
 An APK is not a secret. Anyone with the file can run `strings`, `apktool`, or a
@@ -82,16 +82,57 @@ Android device with NFC. There is no emulator story — NFC needs real hardware.
 ```bash
 cd flutter_topup
 flutter pub get
-flutter test            # 125 unit tests, no hardware needed
+flutter test            # 200 unit + widget tests, no hardware needed
 flutter analyze
 flutter run             # with an Android device attached
 ```
 
-The value file must exist on the card before the app can read it.
-`CardGateway.provisionValueFile()` creates it (authenticating with the
-application master key); it is idempotent, so re-running it on a provisioned
-card is a no-op. It is not wired to a button — call it from a scratch entry
-point or add one, deliberately, because it is a privileged operation.
+### Provisioning a blank card
+
+A card that has never been personalised has no application on it, so
+`SelectApplication(0x010203)` comes back `0xA0` (APPLICATION_NOT_FOUND). The
+app turns that into a distinct "this card is not set up" state on the home
+screen rather than an error, with a **Set up this card** button leading to
+`SetupCardScreen`.
+
+`CardGateway.provisionCard()` does the work. It is a port of steps **2 to 7**
+of `df_setup_desfire` in the C library:
+
+1. `SelectApplication(0x000000)` — drop to card level.
+2. Authenticate with the factory PICC master key (16 zero bytes). The key type
+   varies by card generation, so `authenticatePiccFactory` tries the legacy D40
+   handshake (0x0A), then 3K3DES ISO (0x1A), then AES (0x71), mirroring
+   `_auth_picc_factory`.
+3. `CreateApplication(0xCA)` with `[aid, 0xEF, 0x80 | numKeys]` — `0x80` selects
+   AES application keys.
+4. Select the new application and authenticate with its default all-zero key.
+5. `ChangeKey(0xC4)` for the user key, then the master key, with the C's
+   re-select / re-authenticate between them (ChangeKey on the authenticated key
+   makes the card drop the session, so this is load-bearing).
+6. `CreateValueFile(0xCC)`.
+7. Read the balance back to prove it worked.
+
+**Step 1 of `df_setup_desfire` is deliberately not ported.** That step is
+`df_full_format`, which sends `FormatPICC` (0xFC) and erases every application
+and file on the card. This app gets pointed at whatever the user taps — an
+office badge, a hotel key, a transit card, all DESFire and all
+indistinguishable from a blank card until you look — so provisioning here is
+strictly additive and there is no 0xFC anywhere in `lib/`. A test asserts that.
+The PICC master key is likewise only read, never changed, so a card this app
+touched can still be re-personalised by any other tool.
+
+Provisioning is never automatic. The user has to press a button and then
+confirm a dialog that names the consequences. `AppConfig.autoProvision`
+(default `false`) skips only the confirmation dialog, for bench sessions.
+
+Every step is idempotent: `CreateApplication` treats `0xDE` (DUPLICATE_ERROR)
+as success, and each key is only written if the slot still holds the default.
+Running it on a fully provisioned card just re-reads the balance; running it on
+a card whose application exists but whose value file is missing creates only
+the file.
+
+`CardGateway.provisionValueFile()` still exists for the narrower case of an
+application that already carries this app's keys but has no value file.
 
 Card layout the app expects:
 
