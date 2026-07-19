@@ -38,13 +38,16 @@ info() { printf '\033[36m%s\033[0m\n' "$1"; }
 CP="$CLASSES"
 REF_CLASSES="$PROJECT_DIR/reference/target/classes"
 [ -d "$REF_CLASSES" ] && CP="$CP:$REF_CLASSES"
-# Pi4J and slf4j from the local repository. Globbing avoids pinning versions
-# here; if the reader stack is absent the kiosk simply falls back to the
-# simulator at runtime.
-if [ -d "$M2/com/pi4j" ]; then
+# The reference stack's runtime dependencies from the local repository:
+# Pi4J, its JNA backend (the linuxfs provider loads native code through it --
+# miss this and the reader throws ClassNotFoundException at open), and slf4j.
+# Globbing whole groups avoids pinning versions. If the reader stack is absent
+# the kiosk just falls back to the simulator at runtime.
+for group in com/pi4j net/java/dev/jna org/slf4j; do
+    [ -d "$M2/$group" ] || continue
     while IFS= read -r jar; do CP="$CP:$jar"; done \
-        < <(find "$M2/com/pi4j" "$M2/org/slf4j" -name '*.jar' 2>/dev/null)
-fi
+        < <(find "$M2/$group" -name '*.jar' 2>/dev/null)
+done
 
 # --- module path -----------------------------------------------------------
 # JavaFX ships platform-specific natives under a classifier. On a Pi that is
