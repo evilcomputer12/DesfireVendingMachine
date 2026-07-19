@@ -5,6 +5,7 @@ import com.midnightbrewer.model.Drink;
 import com.midnightbrewer.model.DrinkCatalog;
 import com.midnightbrewer.payment.PaymentListener;
 import com.midnightbrewer.payment.PaymentReceipt;
+import com.midnightbrewer.payment.DesfirePaymentTerminal;
 import com.midnightbrewer.payment.PaymentTerminal;
 import com.midnightbrewer.payment.SimulatedPaymentTerminal;
 
@@ -143,14 +144,28 @@ public class UIController {
     }
 
     /**
-     * The one line to change when the real hardware is ready.
+     * Picks a payment backend: the real RC522 reader if one is attached,
+     * otherwise the in-memory simulator.
      *
-     * <pre>{@code
-     * return new DesfirePaymentTerminal(new Rc522Reader(SpiBus.open()));
-     * }</pre>
+     * <p>Detection is by attempting to open the reader. On a laptop, or a Pi
+     * with nothing wired, opening SPI throws and we fall back to the simulator,
+     * so the same build runs everywhere with no flag. Force the simulator on
+     * the Pi (for UI work) with {@code -Dbrewer.reader=simulated}.
      */
     private PaymentTerminal createTerminal() {
-        return new SimulatedPaymentTerminal();
+        if ("simulated".equalsIgnoreCase(System.getProperty("brewer.reader", ""))) {
+            System.out.println("[UI] reader forced to simulator by -Dbrewer.reader");
+            return new SimulatedPaymentTerminal();
+        }
+        try {
+            PaymentTerminal real = new DesfirePaymentTerminal();
+            System.out.println("[UI] RC522 reader ready -- real card payment enabled");
+            return real;
+        } catch (Exception e) {
+            System.out.println("[UI] no RC522 reader (" + e.getMessage()
+                    + ") -- using the simulator");
+            return new SimulatedPaymentTerminal();
+        }
     }
 
     // ── selection screen ─────────────────────────────────────────────

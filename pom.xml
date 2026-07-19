@@ -37,6 +37,18 @@
         </dependency>
 
         <!--
+          The reference RC522 + DESFire stack, so the kiosk can debit a real
+          card. Build it into the local repository first:
+            mvn -f reference/pom.xml install
+          then the kiosk resolves it here. It pulls in Pi4J transitively.
+        -->
+        <dependency>
+            <groupId>com.midnightbrewer</groupId>
+            <artifactId>midnight-reference</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+
+        <!--
           Pi4J: SPI to the RC522 and a GPIO line for its RST pin.
 
           The two plugins are runtime-scoped on purpose. Pi4J discovers

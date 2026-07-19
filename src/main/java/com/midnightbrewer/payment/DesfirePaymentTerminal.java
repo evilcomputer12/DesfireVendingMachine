@@ -1,127 +1,245 @@
 package com.midnightbrewer.payment;
 
-import com.midnightbrewer.card.Iso14443Transceiver;
+import com.midnightbrewer.card.AuthenticationFailedException;
+import com.midnightbrewer.card.CardCommunicationException;
+import com.midnightbrewer.card.CardException;
+import com.midnightbrewer.card.CardStatusException;
+import com.midnightbrewer.card.InsufficientFundsException;
 import com.midnightbrewer.model.Drink;
 
+import com.midnightbrewer.reference.desfire.DesfireApduChannel;
+import com.midnightbrewer.reference.desfire.DesfireCard;
+import com.midnightbrewer.reference.desfire.DesfireStatus;
+import com.midnightbrewer.reference.desfire.RandomSource;
+import com.midnightbrewer.reference.desfire.ValueFileSettings;
+import com.midnightbrewer.reference.desfire.WalletProfile;
+import com.midnightbrewer.reference.diag.ProtocolTrace;
+import com.midnightbrewer.reference.error.DesfireStatusException;
+import com.midnightbrewer.reference.error.NfcException;
+import com.midnightbrewer.reference.iso14443.ActivatedCard;
+import com.midnightbrewer.reference.iso14443.Rc522IsoDepTransceiver;
+import com.midnightbrewer.reference.pcd.Rc522Driver;
+import com.midnightbrewer.reference.pcd.Register;
+import com.midnightbrewer.reference.spi.Pi4jSpiLink;
+import com.midnightbrewer.reference.util.Timebase;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
- * <h2>YOUR IMPLEMENTATION GOES HERE</h2>
+ * The real {@link PaymentTerminal}: charges a DESFire card through the
+ * reference RC522 stack.
  *
- * Real card payment over the RC522. This class is deliberately left as a
- * skeleton — the walkthrough in {@code docs/DESFIRE-PAYMENT-TUTORIAL.md}
- * explains the protocol, and the method stubs below give you the order of
- * operations. The crypto and the command encoding are yours to write; that is
- * the part worth learning.
+ * <p>This is an <em>adapter</em>. It implements the kiosk's small
+ * {@code PaymentTerminal} contract and translates it into the reference
+ * library's very different vocabulary -- {@code Rc522Driver},
+ * {@code Iso14443Transceiver}, {@code DesfireCard} -- and translates the
+ * reference's exceptions back into the kiosk's. Neither side knows the other's
+ * types. That is the whole reason the UI could be written and tested against a
+ * simulator long before this class existed: the UI depends on the interface,
+ * and this is just one more thing that satisfies it.
  *
- * <p>The kiosk already runs end to end against {@link SimulatedPaymentTerminal}.
- * When this class works, change one line in
- * {@code UIController#createTerminal()} and the UI needs no other edit. If you
- * find yourself wanting to change something in the UI to make this fit, the
- * abstraction is wrong — come back and fix it here instead.
- *
- * <p><strong>The one rule that matters:</strong> never call
- * {@code listener.onApproved(...)} until CommitTransaction has returned
- * {@code 0x00}. A Debit that is not committed is discarded by the card. Get
- * this backwards and the machine gives away free coffee.
+ * <p>The reader is opened once, at construction, because bringing up Pi4J and
+ * the RC522 takes over a second and a kiosk should pay that at boot, not on
+ * every tap. Each transaction runs on a single background thread so
+ * {@link #startTransaction} can return immediately; the callbacks are
+ * delivered from that thread, and {@link UIController}'s listener marshals them
+ * onto the JavaFX thread.
  */
 public class DesfirePaymentTerminal implements PaymentTerminal {
 
-    /** Application ID holding the wallet. Matches {@code desfiire.c}. */
-    private static final int WALLET_AID = 0x010203;
+    private final Pi4jSpiLink link;
+    private final Rc522Driver driver;
+    private final Rc522IsoDepTransceiver transceiver;
+    private final WalletProfile profile;
 
-    /** File number of the value file inside that application. */
-    private static final byte WALLET_FILE_NO = 0x01;
+    private final ExecutorService worker =
+            Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "desfire-terminal");
+                t.setDaemon(true);
+                return t;
+            });
 
-    /**
-     * Key number the kiosk authenticates with.
-     *
-     * <p>This key must be able to Debit but NOT Credit — see the access-rights
-     * note in {@code DesfireCommands}. A kiosk in a public hallway is
-     * physically reachable by anyone with a screwdriver; assume its key will
-     * eventually be extracted and make sure that key cannot mint money.
-     */
-    private static final byte KIOSK_KEY_NO = 0x02;
+    /** Set by {@link #cancel()} so the polling loop can bail out between reads. */
+    private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    private volatile boolean scanning = false;
 
-    private final Iso14443Transceiver reader;
-    private volatile boolean polling;
+    /** Opens the reader. Throws if there is no RC522 -- callers fall back to the simulator. */
+    public DesfirePaymentTerminal() throws NfcException {
+        this.profile = WalletProfile.defaults();
+        this.link = Pi4jSpiLink.openDefault();
+        this.driver = new Rc522Driver(link, Timebase.system(), ProtocolTrace.none());
+        driver.initialise();
 
-    public DesfirePaymentTerminal(Iso14443Transceiver reader) {
-        this.reader = reader;
+        int version = driver.version();
+        if (version == 0x00 || version == 0xFF) {
+            link.close();
+            throw new com.midnightbrewer.reference.error.TransportException(
+                    "RC522 not responding on SPI (VersionReg=0x"
+                            + Integer.toHexString(version) + ")");
+        }
+        this.transceiver = new Rc522IsoDepTransceiver(driver);
     }
-
-    // ═════════════════════════════════════════════════════════════════
-    // STEP 1 — poll for a card, then activate it
-    //
-    //   Reuse the logic from platform_card_present() and
-    //   platform_activate_card() in desfiire.c: REQA/WUPA, anticollision
-    //   (both cascade levels — DESFire has a 7-byte UID, so SAK bit 0x04
-    //   will be set and you must run cascade level 2), SELECT, then RATS.
-    //
-    //   Design question to settle before you write it: this method runs on a
-    //   background thread and the UI can cancel at any moment. Where do you
-    //   check the cancel flag so that a cancel during a half-finished
-    //   authentication does not leave the card in a broken session state?
-    // ═════════════════════════════════════════════════════════════════
 
     @Override
     public void startTransaction(Drink drink, PaymentListener listener) {
-        throw new UnsupportedOperationException(
-                "Not implemented yet — see docs/DESFIRE-PAYMENT-TUTORIAL.md, step 1");
+        cancelled.set(false);
+        worker.submit(() -> runTransaction(drink, listener));
     }
 
-    // ═════════════════════════════════════════════════════════════════
-    // STEP 2 — SelectApplication (0x5A), then AuthenticateEV2First (0x71)
-    //
-    //   Your C library already does both: df_select_application() and
-    //   df_authenticate_ev2_first(). Port them, and keep the session state
-    //   (sessKeyEnc, sessKeyMac, TI, cmdCounter) in one object rather than
-    //   as loose fields here — that object is your DFSession struct.
-    //
-    //   Question: df_authenticate_ev2_first zeroes cmdCounter on success.
-    //   Why must the counter be part of every subsequent CMAC, and what
-    //   attack becomes possible if you leave it out?
-    // ═════════════════════════════════════════════════════════════════
+    /**
+     * The whole charge sequence, on the worker thread.
+     *
+     * <p>Poll for a card, activate it, authenticate, read the balance, and --
+     * only if there are sufficient funds -- debit and commit. Exactly one
+     * terminal callback ({@code onApproved} or {@code onDeclined}) is delivered
+     * unless the transaction is cancelled first.
+     */
+    private void runTransaction(Drink drink, PaymentListener listener) {
+        scanning = true;
+        try {
+            if (!waitForCard()) {
+                return; // cancelled while polling; the UI already moved on
+            }
 
-    // ═════════════════════════════════════════════════════════════════
-    // STEP 3 — GetValue (0x6C), then decide
-    //
-    //   Read the balance and compare against drink.getPriceCents().
-    //   If it is short, throw InsufficientFundsException BEFORE sending any
-    //   Debit. The card would refuse anyway with 0xBE BOUNDARY_ERROR, but
-    //   checking first lets you tell the user how much they are short.
-    // ═════════════════════════════════════════════════════════════════
+            ActivatedCard card = transceiver.activate();
+            String uid = card.uid().toString();
+            listener.onCardDetected(uid);
 
-    // ═════════════════════════════════════════════════════════════════
-    // STEP 4 — Debit (0xDC), then CommitTransaction (0xC7)
-    //
-    //   Two commands, and the gap between them is the dangerous part.
-    //   Work through what happens if the card leaves the field:
-    //
-    //     - before Debit           -> nothing happened
-    //     - between Debit and Commit -> card discards it on next power-up
-    //     - after Commit, before you read the response -> AMBIGUOUS
-    //
-    //   That last case is the real problem and it has no clean local answer.
-    //   The tutorial's "torn transaction" section covers the options.
-    //   Decide which one you want before writing the code, not after.
-    // ═════════════════════════════════════════════════════════════════
+            DesfireCard desfire = new DesfireCard(
+                    new DesfireApduChannel(transceiver), RandomSource.secure(),
+                    ProtocolTrace.none());
+
+            desfire.selectApplication(profile.aid());
+            desfire.authenticateEv2First(profile.userKeyNo(), profile.appUserKey());
+
+            int balance = readOrCreateBalance(desfire);
+            listener.onBalanceRead(balance);
+
+            int price = drink.getPriceCents();
+            if (balance < price) {
+                listener.onDeclined(new InsufficientFundsException(balance, price));
+                return;
+            }
+
+            // The debit is provisional until the commit is acknowledged; only
+            // then has the money actually moved and only then may we dispense.
+            desfire.debit(profile.fileNo(), price);
+            desfire.commitTransaction();
+            int after = desfire.getValue(profile.fileNo());
+
+            listener.onApproved(new PaymentReceipt(uid, drink, balance, after));
+        } catch (NfcException e) {
+            listener.onDeclined(translate(e));
+        } catch (RuntimeException e) {
+            listener.onDeclined(new CardCommunicationException(
+                    "unexpected reader error: " + e.getMessage(), e));
+        } finally {
+            scanning = false;
+            quietDeselect();
+        }
+    }
+
+    /** Polls until a card is in the field or the transaction is cancelled. */
+    private boolean waitForCard() throws NfcException {
+        while (!cancelled.get()) {
+            if (transceiver.isCardPresent()) {
+                return true;
+            }
+            try {
+                Thread.sleep(30);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Reads the balance, creating the value file first if the application is
+     * present but the file is not -- the state a firmware-provisioned card is
+     * in. Mirrors the wallet demo and the Flutter top-up app.
+     */
+    private int readOrCreateBalance(DesfireCard desfire) throws NfcException {
+        try {
+            return desfire.getValue(profile.fileNo());
+        } catch (DesfireStatusException e) {
+            if (e.status() != DesfireStatus.FILE_NOT_FOUND.code()) {
+                throw e;
+            }
+        }
+        // Creating a file needs the master key; reading the value needs the
+        // user key -- so re-authenticate across the two.
+        desfire.selectApplication(profile.aid());
+        desfire.authenticateEv2First(0, profile.appMasterKey());
+        desfire.createValueFile(ValueFileSettings.builder(profile.fileNo())
+                .accessRights(profile.accessRights())
+                .lowerLimit(profile.lowerLimit())
+                .upperLimit(profile.upperLimit())
+                .initialValue(profile.initialBalance())
+                .build());
+        desfire.selectApplication(profile.aid());
+        desfire.authenticateEv2First(profile.userKeyNo(), profile.appUserKey());
+        return desfire.getValue(profile.fileNo());
+    }
+
+    /**
+     * Turns a reference exception into the kiosk's vocabulary, so the UI never
+     * sees a {@code com.midnightbrewer.reference.*} type.
+     */
+    private CardException translate(NfcException e) {
+        if (e instanceof DesfireStatusException) {
+            int status = ((DesfireStatusException) e).status();
+            if (status == DesfireStatus.AUTHENTICATION_ERROR.code()) {
+                return new AuthenticationFailedException(e.getMessage(), profile.userKeyNo());
+            }
+            if (status == DesfireStatus.BOUNDARY_ERROR.code()) {
+                // The card refused a debit that would underflow -- treat as funds.
+                return new InsufficientFundsException(0, 0);
+            }
+            return new CardStatusException((byte) status, "DESFire command");
+        }
+        // Timeout, framing error, card pulled from the field, etc.
+        return new CardCommunicationException(e.getMessage(), e);
+    }
+
+    private void quietDeselect() {
+        try {
+            transceiver.deselect();
+        } catch (NfcException ignored) {
+            // The card is often already gone by the time we get here; that is
+            // not an error worth surfacing.
+        }
+    }
 
     @Override
     public void cancel() {
-        polling = false;
-        // Consider: should this also send AbortTransaction (0xA7)? What if
-        // the card has already left the field?
-        throw new UnsupportedOperationException(
-                "Not implemented yet — see docs/DESFIRE-PAYMENT-TUTORIAL.md, step 5");
+        cancelled.set(true);
     }
 
     @Override
     public String getStatusText() {
-        return polling ? "RC522 SCANNING" : "RC522 READY";
+        return scanning ? "RC522 SCANNING" : "RC522 READY";
     }
 
     @Override
     public void close() {
-        polling = false;
-        reader.close();
+        cancelled.set(true);
+        worker.shutdownNow();
+        quietDeselect();
+        // Best effort: power the field down and release SPI. Nothing to do if
+        // it fails on the way out.
+        try {
+            driver.antennaOff();
+        } catch (NfcException | RuntimeException ignored) {
+            // ignore
+        }
+        try {
+            link.close();
+        } catch (NfcException | RuntimeException ignored) {
+            // ignore
+        }
     }
 }

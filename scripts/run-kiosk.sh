@@ -31,6 +31,21 @@ info() { printf '\033[36m%s\033[0m\n' "$1"; }
 
 [ -d "$CLASSES" ] || die "target/classes not found -- run: mvn -o -DskipTests compile"
 
+# --- runtime classpath -----------------------------------------------------
+# The kiosk itself, plus the reference RC522/DESFire stack and its Pi4J and
+# slf4j jars, so real card payment works. JavaFX is deliberately NOT here -- it
+# must live on the module path only, or the launcher reports it as missing.
+CP="$CLASSES"
+REF_CLASSES="$PROJECT_DIR/reference/target/classes"
+[ -d "$REF_CLASSES" ] && CP="$CP:$REF_CLASSES"
+# Pi4J and slf4j from the local repository. Globbing avoids pinning versions
+# here; if the reader stack is absent the kiosk simply falls back to the
+# simulator at runtime.
+if [ -d "$M2/com/pi4j" ]; then
+    while IFS= read -r jar; do CP="$CP:$jar"; done \
+        < <(find "$M2/com/pi4j" "$M2/org/slf4j" -name '*.jar' 2>/dev/null)
+fi
+
 # --- module path -----------------------------------------------------------
 # JavaFX ships platform-specific natives under a classifier. On a Pi that is
 # linux-aarch64; fall back to the plain artifact so this also works on a
@@ -90,5 +105,5 @@ exec java \
     --module-path "$MODULE_PATH" \
     --add-modules javafx.base,javafx.graphics,javafx.controls,javafx.fxml \
     "${JVM_OPTS[@]}" \
-    -cp "$CLASSES" \
+    -cp "$CP" \
     com.midnightbrewer.ui.MainApp
