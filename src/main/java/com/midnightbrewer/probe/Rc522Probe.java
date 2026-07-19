@@ -64,6 +64,7 @@ public final class Rc522Probe {
     private static final byte PCD_IDLE = 0x00;
     private static final byte PCD_TRANSCEIVE = 0x0C;
     private static final byte PICC_REQIDL = 0x26;
+    private static final byte PICC_REQALL = 0x52;
 
     /** PCD_SOFTRESET. */
     private static final byte CMD_SOFT_RESET = 0x0F;
@@ -148,11 +149,11 @@ public final class Rc522Probe {
             // Detection is attempted repeatedly: one lucky read proves nothing,
             // and an intermittent RF stack is worse than a broken one.
             System.out.println();
-            System.out.println("-- card detection (REQA x20) --");
+            System.out.println("-- card detection (REQA, WUPA fallback) x20 --");
             int hits = 0;
             byte[] lastAtqa = null;
             for (int i = 0; i < 20; i++) {
-                byte[] atqa = requestA(spi);
+                byte[] atqa = pollForCard(spi);
                 if (atqa != null) {
                     hits++;
                     lastAtqa = atqa;
@@ -274,7 +275,26 @@ public final class Rc522Probe {
      * @return the ATQA, or {@code null} if no card answered
      */
     private static byte[] requestA(Spi spi) {
-        // 7-bit frame: REQA is a short frame, not a whole byte.
+        return requestA(spi, PICC_REQIDL);
+    }
+
+    /**
+     * Presence poll, matching {@code platform_card_present} in the C: try
+     * REQA, and fall back to WUPA.
+     *
+     * <p>REQA (0x26) is only answered by PICCs in IDLE. Once a card has
+     * answered it sits in READY and ignores further REQAs, so polling with
+     * REQA alone detects a stationary card roughly every other attempt and
+     * looks exactly like a flaky antenna. WUPA (0x52) is answered from IDLE
+     * and HALT, which is why the fallback exists.
+     */
+    private static byte[] pollForCard(Spi spi) {
+        byte[] atqa = requestA(spi, PICC_REQIDL);
+        return atqa != null ? atqa : requestA(spi, PICC_REQALL);
+    }
+
+    private static byte[] requestA(Spi spi, byte mode) {
+        // 7-bit frame: REQA/WUPA are short frames, not whole bytes.
         writeRegister(spi, BIT_FRAMING_REG, (byte) 0x07);
 
         writeRegister(spi, COMM_IEN_REG, (byte) (0x77 | 0x80));
@@ -282,7 +302,7 @@ public final class Rc522Probe {
         setBitMask(spi, FIFO_LEVEL_REG, (byte) 0x80);      // flush FIFO
         writeRegister(spi, COMMAND_REG, PCD_IDLE);
 
-        writeRegister(spi, FIFO_DATA_REG, PICC_REQIDL);
+        writeRegister(spi, FIFO_DATA_REG, mode);
         writeRegister(spi, COMMAND_REG, PCD_TRANSCEIVE);
         setBitMask(spi, BIT_FRAMING_REG, (byte) 0x80);     // StartSend
 
