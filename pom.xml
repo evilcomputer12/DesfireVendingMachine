@@ -41,7 +41,7 @@
 
           The two plugins are runtime-scoped on purpose. Pi4J discovers
           providers on the classpath at startup, and nothing you compile
-          should import them directly -- if your code names a provider class,
+          should import them directly. If your code names a provider class,
           it can no longer be built or unit-tested off the Pi.
 
           linuxfs talks to /dev/spidev directly, and gpiod uses libgpiod,
