@@ -208,7 +208,7 @@ public final class Rc522IsoDepTransceiver implements Iso14443Transceiver {
             PcdResponse response =
                     driver.transceive(PcdCommand.TRANSCEIVE, request, RATS_FRAME_LENGTH);
             if (response.isOk()) {
-                awaitFifoSettled();
+                awaitFifoSettled(response.dataLength());
             }
             receiveBuffer.acceptCommandData(response);
             if (response.isOk()) {
@@ -416,7 +416,7 @@ public final class Rc522IsoDepTransceiver implements Iso14443Transceiver {
         PcdResponse response = driver.transceive(PcdCommand.TRANSCEIVE, request, requestLength);
 
         if (response.isOk()) {
-            awaitFifoSettled();
+            awaitFifoSettled(response.dataLength());
         }
         receiveBuffer.acceptCommandData(response);
 
@@ -436,7 +436,30 @@ public final class Rc522IsoDepTransceiver implements Iso14443Transceiver {
      * is considered complete. See {@link #FIFO_SETTLE_BUDGET_MS} for the cost of
      * this loop in the common case -- it is reproduced as written.
      */
-    private void awaitFifoSettled() throws NfcException {
+    private void awaitFifoSettled(int alreadyReceived) throws NfcException {
+        /*
+         * Fast path, and it is the one taken almost every time.
+         *
+         * MFRC522_ToCard already woke on RxIRq and drained the whole frame into
+         * the response, so the FIFO is empty and no further bytes are coming.
+         * The loop below waits for a NON-ZERO level to appear and hold steady,
+         * which in that situation can never happen, so it spends the entire
+         * FIFO_SETTLE_BUDGET_MS and returns having learned nothing. Measured on
+         * a Pi Zero 2 W that was ~3 s per APDU: 29 s for GetVersion's three
+         * frames, and it would have been well over a minute for a debit.
+         *
+         * The loop still earns its place in the case it was written for -- a
+         * command that finished on IdleIRq while the frame was still arriving,
+         * leaving bytes in the FIFO that ToCard did not take. Then
+         * alreadyReceived is 0 and we fall through and wait properly.
+         *
+         * Note this is NOT the same as shortening the budget, which would break
+         * that slow-frame case.
+         */
+        if (alreadyReceived > 0 && driver.fifoLevel() == 0) {
+            return;
+        }
+
         long start = timebase.millis();
         int previousLevel = 0xFF;
 
