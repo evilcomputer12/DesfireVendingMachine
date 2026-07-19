@@ -88,9 +88,11 @@
     -fx-text-fill: text-lo;
 }
 
-.drink-grid {
-    -fx-padding: 4 26 10 26;
-}
+/*
+ * Padding is set in UIController (GRID_PAD_H / GRID_PAD_V), not here.
+ * It has to agree with the tile-width arithmetic exactly -- when this rule
+ * said 26 and the code assumed 22, the grid overflowed its window by 8px.
+ */
 
 /*
  * The drink tile. Styled as a Button rather than a VBox+handler so it gets

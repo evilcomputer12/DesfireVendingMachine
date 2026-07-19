@@ -20,7 +20,7 @@
   controller generates them from DrinkCatalog, so adding a drink to the menu
   never means touching this file.
 -->
-<BorderPane fx:id="rootPane" prefHeight="600.0" prefWidth="1024.0"
+<BorderPane fx:id="rootPane" prefHeight="1024.0" prefWidth="600.0"
             styleClass="stage-root"
             stylesheets="@styles.css"
             xmlns="http://javafx.com/javafx/17"
@@ -61,7 +61,7 @@
          <children>
 
             <!-- ── 1. selection ─────────────────────────────────── -->
-            <VBox fx:id="selectionScreen" alignment="TOP_CENTER" spacing="6.0">
+            <VBox fx:id="selectionScreen" alignment="CENTER" spacing="6.0">
                <children>
                   <Label styleClass="screen-title" text="CHOOSE YOUR FUEL">
                      <VBox.margin>

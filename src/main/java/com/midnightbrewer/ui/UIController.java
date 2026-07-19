@@ -18,6 +18,7 @@ import javafx.animation.ScaleTransition;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
+import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
@@ -26,6 +27,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
@@ -47,18 +49,27 @@ import java.util.List;
  */
 public class UIController {
 
-    /** Columns in the drink grid. Three fits a 1024px-wide panel comfortably. */
+    /**
+     * Columns in the drink grid. Three works in both orientations: it fills a
+     * 1024px-wide landscape panel, and at 600px portrait it still leaves
+     * ~180px per tile, which is wide enough for "Cappuccino" on one line.
+     */
     private static final int GRID_COLUMNS = 3;
 
-    /*
-     * Sized so three rows clear the 600px panel with visible margin below.
-     * Budget: 600 - 69 (header) - 36 (title block) - 14 (grid padding)
-     *         - 24 (two 12px gaps) = 457 available, / 3 rows = 152 max.
-     * 140 leaves the bottom row breathing room instead of hugging the bezel.
-     */
-    private static final double TILE_WIDTH = 300;
-    private static final double TILE_HEIGHT = 140;
-    private static final double TILE_IMAGE = 78;
+    // Grid metrics. Tiles are sized at runtime from the actual window, not
+    // hardcoded, so the same build serves the 600x1024 portrait kiosk and a
+    // 1024x600 landscape desktop window without a second layout.
+    private static final double GRID_PAD_H = 22;
+    private static final double GRID_PAD_V = 14;
+    private static final double GRID_HGAP = 14;
+    private static final double GRID_VGAP = 12;
+
+    /** Vertical space consumed by the header bar and the "CHOOSE YOUR FUEL" line. */
+    private static final double CHROME_HEIGHT = 118;
+
+    /** Tiles taller than this multiple of their width start to look like columns. */
+    private static final double MAX_TILE_ASPECT = 1.45;
+    private static final double MIN_TILE_HEIGHT = 110;
 
     /** How long the fake brewing cycle runs. */
     private static final Duration BREW_TIME = Duration.seconds(4.5);
@@ -69,6 +80,7 @@ public class UIController {
     }
 
     // ── FXML-injected nodes ──────────────────────────────────────────
+    @FXML private BorderPane rootPane;
     @FXML private VBox selectionScreen;
     @FXML private VBox paymentScreen;
     @FXML private VBox preparationScreen;
@@ -108,12 +120,22 @@ public class UIController {
     private List<Animation> pulseParts = new ArrayList<>();
     private Timeline brewAnimation;
 
+    /** Tiles and their artwork, kept so a resize can re-measure them in place. */
+    private final List<Button> drinkTiles = new ArrayList<>();
+    private final List<ImageView> drinkTileImages = new ArrayList<>();
+
     @FXML
     public void initialize() {
         terminal = createTerminal();
         buildDrinkGrid();
         buildPulseAnimation();
         updateStatusPill();
+
+        // Tiles cannot be measured yet -- the root has no size until it is in
+        // a Scene. Re-measure on every resize instead, which also covers the
+        // window being dragged around during desktop development.
+        rootPane.widthProperty().addListener((o, was, now) -> applyTileMetrics());
+        rootPane.heightProperty().addListener((o, was, now) -> applyTileMetrics());
         // The simulate button is bench scaffolding; it hides itself once a
         // real reader is plugged in.
         devTapButton.setVisible(terminal instanceof SimulatedPaymentTerminal);
@@ -142,6 +164,11 @@ public class UIController {
      */
     private void buildDrinkGrid() {
         drinkGrid.getChildren().clear();
+        drinkTiles.clear();
+        drinkTileImages.clear();
+        drinkGrid.setHgap(GRID_HGAP);
+        drinkGrid.setVgap(GRID_VGAP);
+        drinkGrid.setPadding(new Insets(GRID_PAD_V, GRID_PAD_H, GRID_PAD_V, GRID_PAD_H));
         List<Drink> drinks = DrinkCatalog.all();
 
         for (int i = 0; i < drinks.size(); i++) {
@@ -150,10 +177,44 @@ public class UIController {
         }
     }
 
+    /**
+     * Measures the tiles against the current window size.
+     *
+     * <p>Called on every resize, which is what lets one build serve both the
+     * 600x1024 portrait kiosk and a 1024x600 landscape desktop window. The
+     * height cap matters in portrait: with 1024px of vertical room, three
+     * evenly-divided rows would otherwise produce tall thin columns rather
+     * than tiles.
+     */
+    private void applyTileMetrics() {
+        double w = rootPane.getWidth();
+        double h = rootPane.getHeight();
+        if (w <= 0 || h <= 0 || drinkTiles.isEmpty()) {
+            return;
+        }
+        int rows = (int) Math.ceil(DrinkCatalog.size() / (double) GRID_COLUMNS);
+
+        double tileW = (w - GRID_PAD_H * 2 - GRID_HGAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS;
+        double availH = h - CHROME_HEIGHT - GRID_PAD_V * 2;
+        double tileH = (availH - GRID_VGAP * (rows - 1)) / rows;
+        tileH = Math.max(MIN_TILE_HEIGHT, Math.min(tileH, tileW * MAX_TILE_ASPECT));
+
+        // Leave room under the art for the name and price lines.
+        double img = Math.min(tileH - 52, tileW * 0.62);
+
+        for (int i = 0; i < drinkTiles.size(); i++) {
+            Button tile = drinkTiles.get(i);
+            tile.setPrefSize(tileW, tileH);
+            tile.setMinSize(tileW, tileH);
+            tile.setMaxSize(tileW, tileH);
+            ImageView art = drinkTileImages.get(i);
+            art.setFitWidth(img);
+            art.setFitHeight(img);
+        }
+    }
+
     private Button createDrinkTile(Drink drink) {
         ImageView art = new ImageView(loadImage(drink.getImagePath()));
-        art.setFitWidth(TILE_IMAGE);
-        art.setFitHeight(TILE_IMAGE);
         art.setPreserveRatio(true);
 
         Label name = new Label(drink.getDisplayName());
@@ -169,9 +230,10 @@ public class UIController {
         tile.setGraphic(content);
         tile.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
         tile.getStyleClass().add("drink-tile");
-        tile.setPrefSize(TILE_WIDTH, TILE_HEIGHT);
-        tile.setMinSize(TILE_WIDTH, TILE_HEIGHT);
         tile.setOnAction(e -> handleDrinkSelected(drink));
+
+        drinkTiles.add(tile);
+        drinkTileImages.add(art);
         return tile;
     }
 

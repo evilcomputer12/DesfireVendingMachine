@@ -22,8 +22,15 @@ import java.net.URL;
  */
 public class MainApp extends Application {
 
-    private static final double WIDTH = 1024;
-    private static final double HEIGHT = 600;
+    /*
+     * Portrait. The panel is a 1024x600 MPI7010 mounted rotated, with labwc
+     * applying `--transform 90`, so the logical screen the app sees is
+     * 600x1024. The layout is measured at runtime rather than hardcoded, so
+     * these are starting dimensions for a desktop window, not an assumption
+     * the UI depends on.
+     */
+    private static final double WIDTH = 600;
+    private static final double HEIGHT = 1024;
 
     /**
      * Set {@code -Dbrewer.windowed=true} to run in a normal window while
