@@ -11,20 +11,26 @@ import java.util.Arrays;
  * total length, and T0 carries the interface bytes' presence flags in bits 6..4
  * and the frame size index (FSCI) in bits 3..0.
  *
- * <p><strong>The frame size index is read from the wrong nibble, deliberately.</strong>
- * The C computes it as {@code (res[1] >> 4) & 0x0F} -- the <em>high</em> nibble
- * of T0, which by the specification holds the presence flags, not FSCI. For a
- * typical DESFire ATS of {@code 06 75 77 81 02 80} that yields index 7 (FSC 128)
- * where the correct reading of the low nibble would give index 5 (FSC 64).
+ * <p><strong>The C reads the frame size index from the wrong nibble, and this
+ * class does not reproduce that.</strong> {@code MFRC522_RATS} computes it as
+ * {@code (res[1] >> 4) & 0x0F} -- the <em>high</em> nibble of T0, which by the
+ * specification holds the interface-byte presence flags. FSCI is the low
+ * nibble. On the EV3 tested here, ATS {@code 06 75 77 81 02 80 02 F0} gives
+ * index 7 (FSC 128) by the C's reading, where the low nibble gives index 5
+ * (FSC 64).
  *
- * <p>It is reproduced verbatim, and it is harmless in this driver, because the
- * transmit path caps INF at 40 bytes regardless -- see
- * {@code Rc522IsoDepTransceiver.MAX_TRANSMIT_INFORMATION_BYTES}. The overstated
- * FSC never reaches the air. {@link #specificationFrameSize()} exposes the
- * correct reading alongside it so the difference can be seen rather than
- * guessed at, but nothing in the driver uses it. Changing the default would
- * lift the send limit above what the card agreed to, which is precisely the
- * kind of change that turns a working reader into an intermittent one.
+ * <p>The C gets away with it because its transmit path caps INF at 40 bytes
+ * regardless, and both readings exceed that, so the overstated figure never
+ * reaches the air. But the error is not one-directional: an ATS with
+ * {@code T0 = 0x05}, meaning no interface bytes follow, yields a high nibble of
+ * 0 and therefore FSC 16, understating a true FSC of 64. Whether the bug
+ * inflates or deflates the limit depends on the card.
+ *
+ * <p>So {@link #frameSize()} follows the specification, and
+ * {@link #legacyFrameSize()} keeps the C's reading for comparison in traces.
+ * Note which direction this moves in: for a DESFire it lowers the advertised
+ * limit from 128 to 64, so it is the more conservative choice, not a licence
+ * to send bigger frames. The 40-byte transmit cap still applies on top.
  */
 public final class AnswerToSelect {
 
@@ -67,34 +73,30 @@ public final class AnswerToSelect {
         return bytes[1] & 0xFF;
     }
 
-    /**
-     * The frame size index as the C reads it: the high nibble of T0. See the
-     * class comment -- this is not what the specification says, and it is
-     * intentional.
-     */
+    /** FSCI: the low nibble of T0, per ISO 14443-4. */
     public int frameSizeIndex() {
-        return (formatByte() >> 4) & 0x0F;
+        return formatByte() & 0x0F;
     }
 
-    /** The frame size the driver will actually use, from {@link #frameSizeIndex()}. */
+    /** The frame size the driver uses, from {@link #frameSizeIndex()}. */
     public FrameSize frameSize() {
         return FrameSize.fromIndex(frameSizeIndex());
     }
 
     /**
-     * The frame size a specification-conformant reader would derive, from the
-     * low nibble of T0.
+     * The frame size the C would derive, from the high nibble of T0.
      *
-     * <p>Diagnostic only. Nothing in the driver calls it; it exists so that the
-     * discrepancy is visible in a log next to the value actually in use.
+     * <p>Diagnostic only, so a trace can show both figures side by side when
+     * comparing this driver against the STM32 firmware. Nothing uses it to
+     * decide what goes on the air.
      */
-    public FrameSize specificationFrameSize() {
-        return FrameSize.fromIndex(formatByte() & 0x0F);
+    public FrameSize legacyFrameSize() {
+        return FrameSize.fromIndex((formatByte() >> 4) & 0x0F);
     }
 
     @Override
     public String toString() {
         return Hex.encode(bytes) + " [" + frameSize()
-                + ", spec would read " + specificationFrameSize() + "]";
+                + ", C firmware would read " + legacyFrameSize() + "]";
     }
 }

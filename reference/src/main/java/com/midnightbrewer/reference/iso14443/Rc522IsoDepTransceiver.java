@@ -54,9 +54,12 @@ public final class Rc522IsoDepTransceiver implements Iso14443Transceiver {
      * <p>Below what most cards negotiate, and applied on top of the card's own
      * limit. The C's comment explains the sizing: it keeps a 47-byte ChangeKey
      * APDU chained while letting 37- and 38-byte WriteData and Authenticate
-     * frames go out whole. It also happens to mask the FSCI misreading described
-     * in {@link AnswerToSelect} -- an overstated FSC never reaches the air,
-     * because this cap is what binds.
+     * frames go out whole.
+     *
+     * <p>It is also what made the C's misreading of FSCI harmless -- see
+     * {@link AnswerToSelect}. Whichever nibble the frame size comes from, this
+     * cap is what binds for any card whose FSC is 43 or more, so the negotiated
+     * figure never reaches the air unchanged.
      */
     private static final int MAX_TRANSMIT_INFORMATION_BYTES = 40;
 
