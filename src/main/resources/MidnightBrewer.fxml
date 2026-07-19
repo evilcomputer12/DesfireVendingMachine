@@ -23,7 +23,7 @@
                   <Font name="System Bold" size="36.0" />
                </font>
             </Label>
-            <GridPane alignment="CENTER" hgap="60.0" vgap="40.0">
+            <GridPane alignment="CENTER" hgap="60.0" vgap="20.0">
                <columnConstraints>
                   <ColumnConstraints halignment="CENTER" hgrow="SOMETIMES" minWidth="10.0" />
                   <ColumnConstraints halignment="CENTER" hgrow="SOMETIMES" minWidth="10.0" />
@@ -37,7 +37,7 @@
                   <!-- Espresso -->
                   <VBox alignment="CENTER" spacing="10.0" GridPane.columnIndex="0" GridPane.rowIndex="0">
                      <children>
-                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                        <ImageView fitHeight="220.0" fitWidth="220.0" pickOnBounds="true" preserveRatio="true">
                            <image>
                               <Image url="@/images/espresso.jpg" />
                            </image>
@@ -50,7 +50,7 @@
                   <!-- Latte -->
                   <VBox alignment="CENTER" spacing="10.0" GridPane.columnIndex="1" GridPane.rowIndex="0">
                      <children>
-                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                        <ImageView fitHeight="220.0" fitWidth="220.0" pickOnBounds="true" preserveRatio="true">
                            <image>
                               <Image url="@/images/latte.jpg" />
                            </image>
@@ -63,7 +63,7 @@
                   <!-- Americano -->
                   <VBox alignment="CENTER" spacing="10.0" GridPane.columnIndex="2" GridPane.rowIndex="0">
                      <children>
-                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                        <ImageView fitHeight="220.0" fitWidth="220.0" pickOnBounds="true" preserveRatio="true">
                            <image>
                               <Image url="@/images/americano.jpg" />
                            </image>
@@ -76,7 +76,7 @@
                   <!-- Cappuccino -->
                   <VBox alignment="CENTER" spacing="10.0" GridPane.columnIndex="0" GridPane.rowIndex="1">
                      <children>
-                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                        <ImageView fitHeight="220.0" fitWidth="220.0" pickOnBounds="true" preserveRatio="true">
                            <image>
                               <Image url="@/images/cappuccino.jpg" />
                            </image>
@@ -89,7 +89,7 @@
                   <!-- Mocha -->
                   <VBox alignment="CENTER" spacing="10.0" GridPane.columnIndex="1" GridPane.rowIndex="1">
                      <children>
-                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                        <ImageView fitHeight="220.0" fitWidth="220.0" pickOnBounds="true" preserveRatio="true">
                            <image>
                               <Image url="@/images/mocha.jpg" />
                            </image>
