@@ -215,3 +215,23 @@ semantics — runs in unit tests with no phone and no card.
 On top of that, `desfire_card_test.dart` runs the real command layer against a
 software card that implements the protocol independently, checks the client's
 CMACs, and models the value-file transaction buffer.
+
+## What is and is not verified
+
+| Check | Status |
+|---|---|
+| `flutter analyze` | clean |
+| `flutter test` | 125/125 passing |
+| `flutter build apk --debug` | builds |
+| `flutter build apk --release` | builds (47.9 MB) |
+| Manifest + tech filter compiled by `aapt2` | verified in the built APK |
+| Release permissions | `NFC` only — no `INTERNET` |
+| **Run on a phone** | **never** |
+| **Tested against a real DESFire card** | **never** |
+
+The bottom two rows are the important ones. Everything above them says the
+code is well-formed and self-consistent; none of it says the card will
+actually accept these commands. The inferences in "Protocol details taken
+from the spec" below are exactly what a first run against real hardware will
+confirm or demolish — expect to spend your first session there, and check
+those items first when something fails.
