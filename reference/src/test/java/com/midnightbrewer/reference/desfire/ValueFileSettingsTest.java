@@ -59,7 +59,9 @@ class ValueFileSettingsTest {
     void defaultWalletProfileMatchesTheFirmwareConstants() {
         WalletProfile profile = WalletProfile.defaults();
         assertEquals(0x010203, profile.aid());
-        assertEquals(0x02, profile.fileNo());
+        // Value file 0x01, matching flutter_topup; the firmware's 0x02 is its
+        // separate standard data file.
+        assertEquals(0x01, profile.fileNo());
         assertEquals(0x02, profile.userKeyNo());
         assertArrayEquals(new byte[16], profile.piccMasterKey());
         assertArrayEquals(filled(0x11), profile.appMasterKey());

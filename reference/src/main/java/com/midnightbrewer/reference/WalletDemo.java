@@ -165,7 +165,7 @@ public final class WalletDemo {
 
         System.out.println("Step 3: read the balance");
         t = System.nanoTime();
-        int before = card.getValue(profile.fileNo());
+        int before = readOrCreateValue(card, profile);
         System.out.println("  balance before: " + formatCents(before)
                 + " (" + before + " cents)" + since(t));
 
@@ -201,6 +201,52 @@ public final class WalletDemo {
         System.out.println("WARNING: expected " + formatCents(expected) + " but read "
                 + formatCents(after) + " -- the commit did not take as expected.");
         return 1;
+    }
+
+    /**
+     * Reads the balance, creating the value file first if the application
+     * exists but the file does not.
+     *
+     * <p>This is the state a card the STM32 firmware set up is in: the
+     * application {@code 0x010203} is present with its keys, but the firmware
+     * created a standard <em>data</em> file at 0x02, not a <em>value</em> file.
+     * The wallet lives in file 0x01 (matching flutter_topup), so on a
+     * firmware-provisioned card that file is missing and GetValue returns
+     * {@code FILE_NOT_FOUND}.
+     *
+     * <p>Creating a file needs the application master key (key 0), while
+     * reading the value needs the user key (key 2), so this re-authenticates
+     * across the two. It mirrors what the Flutter top-up app does when it meets
+     * the same half-provisioned card.
+     */
+    private static int readOrCreateValue(DesfireCard card, WalletProfile profile)
+            throws NfcException {
+        try {
+            return card.getValue(profile.fileNo());
+        } catch (DesfireStatusException e) {
+            if (!e.is(DesfireStatus.FILE_NOT_FOUND)) {
+                throw e;
+            }
+        }
+
+        System.out.println("  value file " + profile.fileNo()
+                + " not present -- creating it with an opening balance of "
+                + formatCents(profile.initialBalance()));
+        // CreateFile is a master-key operation; the user key cannot do it.
+        card.selectApplication(profile.aid());
+        card.authenticateEv2First(0, profile.appMasterKey());
+        card.createValueFile(com.midnightbrewer.reference.desfire.ValueFileSettings
+                .builder(profile.fileNo())
+                .accessRights(profile.accessRights())
+                .lowerLimit(profile.lowerLimit())
+                .upperLimit(profile.upperLimit())
+                .initialValue(profile.initialBalance())
+                .build());
+
+        // Back to the user key for the read and the debit that follow.
+        card.selectApplication(profile.aid());
+        card.authenticateEv2First(profile.userKeyNo(), profile.appUserKey());
+        return card.getValue(profile.fileNo());
     }
 
     /**
@@ -244,12 +290,12 @@ public final class WalletDemo {
         return false;
     }
 
-    /** Formats a cent amount as a euro-style string: 2150 -> "21.50". */
     /** Wall-clock since {@code startNanos}, formatted as {@code "  (12.3 ms)"}. */
     private static String since(long startNanos) {
         return String.format("  (%.1f ms)", (System.nanoTime() - startNanos) / 1_000_000.0);
     }
 
+    /** Formats a cent amount as a euro-style string: 2150 -> "21.50". */
     static String formatCents(int cents) {
         boolean negative = cents < 0;
         int abs = Math.abs(cents);

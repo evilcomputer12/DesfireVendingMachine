@@ -99,7 +99,10 @@ public final class WalletProfile {
     /** Mutable builder; every field defaults to the firmware/demo value. */
     public static final class Builder {
         private int aid = 0x010203;
-        private int fileNo = 0x02;
+        // Value file 0x01, matching flutter_topup's AppConfig.valueFileNo. File
+        // 0x02 is the STM32 firmware's standard data file, so the wallet lives
+        // in its own file and the two coexist on one card.
+        private int fileNo = 0x01;
         private int userKeyNo = 0x02;
         private byte[] piccMasterKey = new byte[16];
         private byte[] appMasterKey = filled(0x11);
