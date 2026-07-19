@@ -122,9 +122,13 @@
     -fx-padding: 7 9 9 9; /* compensate for the thicker border, no size jump */
 }
 
-.drink-tile:focused {
-    -fx-border-color: accent;
-}
+/*
+ * No :focused styling. JavaFX gives the first button focus on startup, which
+ * on the kiosk drew a permanent accent ring around Espresso and read as
+ * "already selected" before anyone had touched anything. There is no keyboard
+ * on the machine, so a focus ring communicates nothing and actively misleads.
+ * Press feedback is handled by :pressed above.
+ */
 
 .drink-name {
     -fx-font-size: 15px;

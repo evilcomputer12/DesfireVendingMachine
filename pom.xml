@@ -44,6 +44,18 @@
                 <version>0.0.8</version>
                 <configuration>
                     <mainClass>com.midnightbrewer.ui.MainApp</mainClass>
+                    <options>
+                        <!--
+                          Raspberry Pi OS runs the kiosk under the C locale, so
+                          the JVM picked ASCII for stdout and every non-ASCII
+                          character in a log line arrived as '?'. Pin both:
+                          file.encoding alone is not enough on Java 18+, where
+                          console output follows stdout.encoding separately.
+                        -->
+                        <option>-Dfile.encoding=UTF-8</option>
+                        <option>-Dstdout.encoding=UTF-8</option>
+                        <option>-Dstderr.encoding=UTF-8</option>
+                    </options>
                 </configuration>
             </plugin>
 

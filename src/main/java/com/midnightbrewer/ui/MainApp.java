@@ -3,6 +3,7 @@ package com.midnightbrewer.ui;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
+import javafx.scene.Cursor;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.input.KeyCode;
@@ -71,6 +72,10 @@ public class MainApp extends Application {
             stage.initStyle(StageStyle.UNDECORATED);
             stage.setFullScreen(true);
             stage.setFullScreenExitHint("");
+            // Xwayland parks a pointer in the middle of the screen, which sat
+            // on a tile and left it stuck in :hover on the real panel. A
+            // touchscreen kiosk has no cursor to show.
+            scene.setCursor(Cursor.NONE);
         }
 
         stage.show();
