@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tech list for android.nfc.action.TECH_DISCOVERED.
+
+  Each <tech-list> is an AND; multiple <tech-list> blocks are an OR. A MIFARE
+  DESFire EV2/EV3 reports both NfcA (the 14443-A layer) and IsoDep (the
+  14443-4 layer that carries our APDUs), so the first block matches a real
+  DESFire card. The NfcA-only block is kept so the app is still offered for
+  14443-A tags that have not finished activating into ISO-DEP; the protocol
+  layer then reports a clear "not an ISO 14443-4 card" error rather than the
+  system silently ignoring the tap.
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <tech-list>
+        <tech>android.nfc.tech.IsoDep</tech>
+        <tech>android.nfc.tech.NfcA</tech>
+    </tech-list>
+    <tech-list>
+        <tech>android.nfc.tech.NfcA</tech>
+    </tech-list>
+</resources>

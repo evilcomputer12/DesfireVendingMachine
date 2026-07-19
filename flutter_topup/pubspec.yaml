@@ -1,0 +1,30 @@
+name: flutter_topup
+description: >
+  MIFARE DESFire EV2/EV3 NFC top-up app. Reads and credits a balance held in a
+  DESFire value file using AES-128 EV2 secure messaging.
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Android IsoDep (ISO 14443-4) transceive. 4.x has a different API from 3.x;
+  # the glue in lib/nfc/ targets 4.x.
+  nfc_manager: ^4.2.1
+
+  # AES-ECB/CBC and AES-CMAC. Its CMac is verified against the RFC 4493
+  # vectors in test/desfire_crypto_test.dart.
+  pointycastle: ^4.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
