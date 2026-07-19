@@ -52,6 +52,19 @@ public final class Rc522Probe {
     private static final byte T_RELOAD_REG_H = 0x2C;
     private static final byte T_RELOAD_REG_L = 0x2D;
 
+    // Card detection (REQA).
+    private static final byte COMM_IEN_REG = 0x02;
+    private static final byte COMM_IRQ_REG = 0x04;
+    private static final byte ERROR_REG = 0x06;
+    private static final byte FIFO_DATA_REG = 0x09;
+    private static final byte FIFO_LEVEL_REG = 0x0A;
+    private static final byte CONTROL_REG = 0x0C;
+    private static final byte BIT_FRAMING_REG = 0x0D;
+
+    private static final byte PCD_IDLE = 0x00;
+    private static final byte PCD_TRANSCEIVE = 0x0C;
+    private static final byte PICC_REQIDL = 0x26;
+
     /** PCD_SOFTRESET. */
     private static final byte CMD_SOFT_RESET = 0x0F;
 
@@ -130,6 +143,33 @@ public final class Rc522Probe {
             } else {
                 System.out.println("RF field did NOT come on. Antenna drivers still disabled.");
                 System.out.println("  Suspect the antenna coil connection on the module itself.");
+            }
+
+            // Detection is attempted repeatedly: one lucky read proves nothing,
+            // and an intermittent RF stack is worse than a broken one.
+            System.out.println();
+            System.out.println("-- card detection (REQA x20) --");
+            int hits = 0;
+            byte[] lastAtqa = null;
+            for (int i = 0; i < 20; i++) {
+                byte[] atqa = requestA(spi);
+                if (atqa != null) {
+                    hits++;
+                    lastAtqa = atqa;
+                }
+                Thread.sleep(30);
+            }
+            System.out.printf("detected %d/20 attempts%n", hits);
+            if (lastAtqa != null) {
+                System.out.println("ATQA = " + hex(lastAtqa) + describeAtqa(lastAtqa));
+            }
+            if (hits == 0) {
+                System.out.println("No card answered. Either nothing is on the antenna,");
+                System.out.println("  it is too far away, or it is not ISO-14443 Type A.");
+            } else if (hits < 20) {
+                System.out.println("INTERMITTENT -- reposition the card flat on the coil.");
+            } else {
+                System.out.println("Rock solid. Card is present and answering every time.");
             }
 
             spi.close();
@@ -225,6 +265,81 @@ public final class Rc522Probe {
         // AntennaOn(): read-modify-write, setting Tx1RFEn | Tx2RFEn.
         int current = readRegister(spi, TX_CONTROL_REG);
         writeRegister(spi, TX_CONTROL_REG, (byte) (current | 0x03));
+    }
+
+    /**
+     * REQA: asks any card in the field to announce itself, and returns the
+     * 2-byte ATQA. Port of {@code MFRC522_Request} + {@code MFRC522_ToCard}.
+     *
+     * @return the ATQA, or {@code null} if no card answered
+     */
+    private static byte[] requestA(Spi spi) {
+        // 7-bit frame: REQA is a short frame, not a whole byte.
+        writeRegister(spi, BIT_FRAMING_REG, (byte) 0x07);
+
+        writeRegister(spi, COMM_IEN_REG, (byte) (0x77 | 0x80));
+        clearBitMask(spi, COMM_IRQ_REG, (byte) 0x80);
+        setBitMask(spi, FIFO_LEVEL_REG, (byte) 0x80);      // flush FIFO
+        writeRegister(spi, COMMAND_REG, PCD_IDLE);
+
+        writeRegister(spi, FIFO_DATA_REG, PICC_REQIDL);
+        writeRegister(spi, COMMAND_REG, PCD_TRANSCEIVE);
+        setBitMask(spi, BIT_FRAMING_REG, (byte) 0x80);     // StartSend
+
+        /*
+         * The C spins a 2,000,000-iteration counter as a backstop, sized for
+         * ~4 us per iteration on the STM32. Here every iteration is an SPI
+         * syscall costing tens of microseconds, so that count would run for
+         * minutes. Iteration counts do not port; use a wall-clock deadline
+         * that is comfortably longer than the RC522's own ~300 ms timer.
+         */
+        int n;
+        long deadline = System.nanoTime() + 500_000_000L;
+        do {
+            n = readRegister(spi, COMM_IRQ_REG);
+        } while (System.nanoTime() < deadline && (n & 0x01) == 0 && (n & 0x30) == 0);
+
+        clearBitMask(spi, BIT_FRAMING_REG, (byte) 0x80);
+
+        if ((readRegister(spi, ERROR_REG) & 0x1B) != 0) {
+            return null;                                   // CRC / collision / protocol error
+        }
+        if ((n & 0x01) != 0) {
+            return null;                                   // TimerIRq: nobody answered
+        }
+
+        int fifo = readRegister(spi, FIFO_LEVEL_REG);
+        int lastBits = readRegister(spi, CONTROL_REG) & 0x07;
+        int bits = lastBits != 0 ? (fifo - 1) * 8 + lastBits : fifo * 8;
+        if (bits != 0x10) {
+            return null;                                   // ATQA must be exactly 16 bits
+        }
+
+        byte[] atqa = new byte[2];
+        for (int i = 0; i < 2; i++) {
+            atqa[i] = (byte) readRegister(spi, FIFO_DATA_REG);
+        }
+        return atqa;
+    }
+
+    /** ATQA bit 6 of byte 0 signals a UID longer than 4 bytes. */
+    private static String describeAtqa(byte[] atqa) {
+        int b0 = atqa[0] & 0xFF;
+        if (b0 == 0x44) {
+            return "   (7-byte UID, ISO-14443-4 capable -- consistent with DESFire)";
+        }
+        if (b0 == 0x04) {
+            return "   (4-byte UID -- looks like MIFARE Classic, not DESFire)";
+        }
+        return "";
+    }
+
+    private static void setBitMask(Spi spi, byte register, byte mask) {
+        writeRegister(spi, register, (byte) (readRegister(spi, register) | mask));
+    }
+
+    private static void clearBitMask(Spi spi, byte register, byte mask) {
+        writeRegister(spi, register, (byte) (readRegister(spi, register) & ~mask));
     }
 
     private static String hex(byte[] b) {
