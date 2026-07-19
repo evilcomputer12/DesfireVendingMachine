@@ -132,11 +132,25 @@ public final class Pi4jSpiLink implements SpiLink {
         if (closed) {
             throw new TransportException("SPI link is closed");
         }
+        transferCount++;
         try {
             spi.transfer(tx, rx, length);
         } catch (RuntimeException e) {
             throw new TransportException("SPI transfer of " + length + " bytes failed", e);
         }
+    }
+
+    private long transferCount;
+
+    /**
+     * How many SPI transfers have been issued. Each one is a separate syscall
+     * through the kernel's spidev driver, and on a Pi Zero 2 W that fixed
+     * per-call overhead -- not the 1 MHz wire speed, and not the card -- is
+     * what dominates a DESFire transaction's wall clock. Exposed so a demo can
+     * show the count rather than leave "why is it slow" to speculation.
+     */
+    public long transferCount() {
+        return transferCount;
     }
 
     /** True if the reset line is currently released, so the chip can respond. */

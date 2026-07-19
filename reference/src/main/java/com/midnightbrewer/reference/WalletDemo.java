@@ -67,7 +67,7 @@ public final class WalletDemo {
 
         try (Pi4jSpiLink link = Pi4jSpiLink.openDefault()) {
             Rc522Driver driver = new Rc522Driver(link, Timebase.system(), trace);
-            int exit = run(driver, options, trace);
+            int exit = run(driver, options, trace, link);
             System.exit(exit);
         } catch (NfcException e) {
             System.out.println();
@@ -81,8 +81,8 @@ public final class WalletDemo {
         }
     }
 
-    private static int run(Rc522Driver driver, Options options, ProtocolTrace trace)
-            throws NfcException {
+    private static int run(Rc522Driver driver, Options options, ProtocolTrace trace,
+            Pi4jSpiLink link) throws NfcException {
         // ---- 1. reader --------------------------------------------------
         driver.initialise();
         int version = driver.version();
@@ -118,10 +118,11 @@ public final class WalletDemo {
                 com.midnightbrewer.reference.desfire.RandomSource.secure(), trace);
         WalletProfile profile = WalletProfile.defaults();
 
+        long spiBefore = link.transferCount();
         int exit = runWallet(card, profile, options.debitAmount);
 
         if (options.timing) {
-            printTimingReport(timed);
+            printTimingReport(timed, link.transferCount() - spiBefore);
         }
 
         // ---- 4. release --------------------------------------------------
@@ -131,7 +132,7 @@ public final class WalletDemo {
     }
 
     /** A per-APDU timing table plus totals, printed after the sequence runs. */
-    private static void printTimingReport(TimingTransceiver timed) {
+    private static void printTimingReport(TimingTransceiver timed, long spiTransfers) {
         System.out.println();
         System.out.println("Transaction trace (per APDU):");
         System.out.printf("  %3s  %-24s %5s %5s %9s%n",
@@ -143,8 +144,17 @@ public final class WalletDemo {
                     e.requestBytes(), e.responseBytes(), e.millis());
         }
         System.out.println("  ---  ------------------------ ----- ----- ---------");
+        double total = timed.totalMillis();
+        int apdus = timed.exchanges().size();
         System.out.printf("  %d APDUs, %.1f ms on the air (excludes card polling and JVM start)%n",
-                timed.exchanges().size(), timed.totalMillis());
+                apdus, total);
+        // The "why is it slow" line. The card answers in single-digit ms; the
+        // time goes on SPI syscalls, one per register touch and per FIFO byte.
+        System.out.printf("  %d SPI transfers, one syscall each -> ~%.0f us/transfer of "
+                        + "kernel+JNI overhead.%n",
+                spiTransfers, spiTransfers == 0 ? 0 : total * 1000.0 / spiTransfers);
+        System.out.println("  That fixed per-call cost, not the 1 MHz wire or the card, is the wall clock.");
+        System.out.println("  Batching the FIFO reads/writes into one transfer each is the lever if it matters.");
     }
 
     /** The wallet sequence proper, split out so it reads as the steps it is. */
