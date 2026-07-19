@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressBar?>
+<?import javafx.scene.image.Image?>
+<?import javafx.scene.image.ImageView?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.text.Font?>
+
+<StackPane fx:id="rootPane" prefHeight="480.0" prefWidth="800.0" style="-fx-background-color: #121212;" xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.midnightbrewer.ui.UIController">
+   <children>
+      <!-- Selection Screen -->
+      <VBox fx:id="selectionScreen" alignment="CENTER" spacing="30.0">
+         <children>
+            <Label text="Select Your Fuel" textFill="#e0e0e0">
+               <font>
+                  <Font name="System Bold" size="36.0" />
+               </font>
+            </Label>
+            <HBox alignment="CENTER" spacing="40.0">
+               <children>
+                  <!-- Espresso -->
+                  <VBox alignment="CENTER" spacing="10.0">
+                     <children>
+                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                           <image>
+                              <Image url="@/images/espresso.jpg" />
+                           </image>
+                        </ImageView>
+                        <Button fx:id="btnEspresso" mnemonicParsing="false" onAction="#handleSelectEspresso" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Espresso&#10;$1.50" textAlignment="CENTER">
+                           <font>
+                              <Font name="System Bold" size="20.0" />
+                           </font>
+                        </Button>
+                     </children>
+                  </VBox>
+                  <!-- Latte -->
+                  <VBox alignment="CENTER" spacing="10.0">
+                     <children>
+                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                           <image>
+                              <Image url="@/images/latte.jpg" />
+                           </image>
+                        </ImageView>
+                        <Button fx:id="btnLatte" mnemonicParsing="false" onAction="#handleSelectLatte" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Latte&#10;$2.50" textAlignment="CENTER">
+                           <font>
+                              <Font name="System Bold" size="20.0" />
+                           </font>
+                        </Button>
+                     </children>
+                  </VBox>
+                  <!-- Americano -->
+                  <VBox alignment="CENTER" spacing="10.0">
+                     <children>
+                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                           <image>
+                              <Image url="@/images/americano.jpg" />
+                           </image>
+                        </ImageView>
+                        <Button fx:id="btnAmericano" mnemonicParsing="false" onAction="#handleSelectAmericano" style="-fx-background-color: #1E1E1E; -fx-text-fill: #BB86FC; -fx-border-color: #BB86FC; -fx-border-radius: 10; -fx-background-radius: 10;" text="Americano&#10;$2.00" textAlignment="CENTER">
+                           <font>
+                              <Font name="System Bold" size="20.0" />
+                           </font>
+                        </Button>
+                     </children>
+                  </VBox>
+               </children>
+            </HBox>
+         </children>
+      </VBox>
+
+      <!-- Payment Screen -->
+      <VBox fx:id="paymentScreen" alignment="CENTER" spacing="40.0" visible="false">
+         <children>
+            <Label text="Please tap your DESFire Card..." textFill="#03dac6">
+               <font>
+                  <Font size="28.0" />
+               </font>
+            </Label>
+            <Label fx:id="selectedItemLabel" text="Item" textFill="#bb86fc">
+               <font>
+                  <Font name="System Italic" size="24.0" />
+               </font>
+            </Label>
+            <HBox alignment="CENTER" spacing="30.0">
+                <Button mnemonicParsing="false" onAction="#handleCancel" style="-fx-background-color: #CF6679; -fx-text-fill: white; -fx-background-radius: 10;" text="Cancel">
+                   <font>
+                      <Font size="20.0" />
+                   </font>
+                </Button>
+                <!-- Hidden button for testing without hardware -->
+                <Button mnemonicParsing="false" onAction="#simulateSuccessfulPayment" style="-fx-background-color: transparent; -fx-text-fill: #444444;" text="Simulate Tap" />
+            </HBox>
+         </children>
+      </VBox>
+
+      <!-- Preparation Screen -->
+      <VBox fx:id="preparationScreen" alignment="CENTER" spacing="30.0" visible="false">
+         <children>
+            <Label text="Brewing your coffee..." textFill="#e0e0e0">
+               <font>
+                  <Font size="32.0" />
+               </font>
+            </Label>
+            <ProgressBar fx:id="progressBar" prefHeight="30.0" prefWidth="400.0" progress="0.0" style="-fx-accent: #BB86FC;" />
+         </children>
+      </VBox>
+   </children>
+</StackPane>
