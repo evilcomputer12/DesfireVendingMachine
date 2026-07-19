@@ -59,6 +59,15 @@ public class MainApp extends Application {
 
         Scene scene = new Scene(root, WIDTH, HEIGHT, Color.web("#0D0D11"));
 
+        /*
+         * Hover styling is scoped to `.desktop` in the stylesheet and only
+         * enabled here. Hiding the cursor is not enough on the kiosk: the
+         * Xwayland pointer still exists at some coordinate and leaves whatever
+         * tile it happens to sit on stuck in :hover, which reads as a
+         * pre-selected drink. A touchscreen has no hover state to represent.
+         */
+        root.getStyleClass().add(WINDOWED ? "desktop" : "kiosk");
+
         scene.setOnKeyPressed(event -> {
             if (event.getCode() == KeyCode.ESCAPE) {
                 Platform.exit();

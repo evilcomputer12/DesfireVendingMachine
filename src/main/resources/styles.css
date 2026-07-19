@@ -109,7 +109,7 @@
     -fx-content-display: top;
 }
 
-.drink-tile:hover {
+.desktop .drink-tile:hover {
     -fx-background-color: ink-raised;
     -fx-border-color: derive(accent, -35%);
 }
@@ -205,7 +205,7 @@
     -fx-cursor: hand;
 }
 
-.btn-ghost:hover {
+.desktop .btn-ghost:hover {
     -fx-border-color: danger;
     -fx-text-fill: danger;
 }
@@ -229,7 +229,7 @@
     -fx-cursor: hand;
 }
 
-.btn-dev:hover {
+.desktop .btn-dev:hover {
     -fx-text-fill: text-lo;
     -fx-border-color: text-lo;
 }
