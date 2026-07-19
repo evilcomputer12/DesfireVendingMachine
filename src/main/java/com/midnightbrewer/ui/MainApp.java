@@ -19,13 +19,15 @@ public class MainApp extends Application {
         }
         Parent root = FXMLLoader.load(fxmlLocation);
 
-        Scene scene = new Scene(root, 800, 480);
+        Scene scene = new Scene(root, 1024, 600);
         primaryStage.setTitle("The Midnight Brewer");
+        
+        // Strict Kiosk Mode
+        primaryStage.initStyle(javafx.stage.StageStyle.UNDECORATED);
+        primaryStage.setFullScreen(true);
+        primaryStage.setFullScreenExitHint("");
+        
         primaryStage.setScene(scene);
-        
-        // Full screen is great for Raspberry Pi 7" display
-        // primaryStage.setFullScreen(true); 
-        
         primaryStage.show();
     }
 

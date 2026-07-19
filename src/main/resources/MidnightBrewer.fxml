@@ -11,7 +11,7 @@
 <?import javafx.scene.layout.VBox?>
 <?import javafx.scene.text.Font?>
 
-<StackPane fx:id="rootPane" prefHeight="480.0" prefWidth="800.0" style="-fx-background-color: #121212;" xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.midnightbrewer.ui.UIController">
+<StackPane fx:id="rootPane" prefHeight="600.0" prefWidth="1024.0" style="-fx-background-color: #121212;" xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.midnightbrewer.ui.UIController">
    <children>
       <!-- Selection Screen -->
       <VBox fx:id="selectionScreen" alignment="CENTER" spacing="30.0">
@@ -21,12 +21,12 @@
                   <Font name="System Bold" size="36.0" />
                </font>
             </Label>
-            <HBox alignment="CENTER" spacing="40.0">
+            <HBox alignment="CENTER" spacing="60.0">
                <children>
                   <!-- Espresso -->
                   <VBox alignment="CENTER" spacing="10.0">
                      <children>
-                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                        <ImageView fitHeight="180.0" fitWidth="180.0" pickOnBounds="true" preserveRatio="true">
                            <image>
                               <Image url="@/images/espresso.jpg" />
                            </image>
@@ -41,7 +41,7 @@
                   <!-- Latte -->
                   <VBox alignment="CENTER" spacing="10.0">
                      <children>
-                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                        <ImageView fitHeight="180.0" fitWidth="180.0" pickOnBounds="true" preserveRatio="true">
                            <image>
                               <Image url="@/images/latte.jpg" />
                            </image>
@@ -56,7 +56,7 @@
                   <!-- Americano -->
                   <VBox alignment="CENTER" spacing="10.0">
                      <children>
-                        <ImageView fitHeight="150.0" fitWidth="150.0" pickOnBounds="true" preserveRatio="true">
+                        <ImageView fitHeight="180.0" fitWidth="180.0" pickOnBounds="true" preserveRatio="true">
                            <image>
                               <Image url="@/images/americano.jpg" />
                            </image>
