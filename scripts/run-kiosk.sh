@@ -101,6 +101,11 @@ JVM_OPTS=(
     "-Dstderr.encoding=UTF-8"
     # Try the GPU pipeline first, fall back to software automatically.
     "-Dprism.order=$PRISM_ORDER"
+    # The VC4 reports only OpenGL 2.1, so JavaFX's capability check refuses the
+    # GPU and silently drops to CPU rendering. The chip is genuinely accelerated
+    # (glxinfo: "VC4 V3D 2.1", direct rendering yes), so override the check and
+    # use it. Verified: with this the pipeline stays ES2 instead of SW.
+    "-Dprism.forceGPU=true"
     "-Dprism.vsync=true"
     # Cap the animation clock at 30 fps instead of 60. The pulsing rings and
     # fades look the same to the eye at arm's length but cost half the repaints,
