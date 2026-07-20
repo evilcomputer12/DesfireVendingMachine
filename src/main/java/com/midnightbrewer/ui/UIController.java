@@ -21,6 +21,7 @@ import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.CacheHint;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ContentDisplay;
@@ -495,6 +496,12 @@ public class UIController {
         for (int i = 0; i < rings.length; i++) {
             Circle ring = rings[i];
             Duration offset = Duration.millis(i * 400L);
+
+            // Render each ring to a bitmap once and animate the bitmap. Without
+            // this the Pi re-rasterises the vector circle every frame while it
+            // scales and fades; with it, scaling a cached image is nearly free.
+            ring.setCache(true);
+            ring.setCacheHint(CacheHint.SPEED);
 
             ScaleTransition grow = new ScaleTransition(Duration.millis(1800), ring);
             grow.setFromX(0.65);

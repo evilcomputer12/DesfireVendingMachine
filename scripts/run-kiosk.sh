@@ -82,14 +82,34 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 export DISPLAY="${DISPLAY:-:0}"
 
+# Rendering pipeline. es2 uses the GPU and is far lighter on the CPU than the
+# software rasteriser; if the Pi's GLES stack cannot start it, JavaFX falls
+# back to sw on its own. Override with KIOSK_PRISM=sw to force software.
+PRISM_ORDER="${KIOSK_PRISM:-es2,sw}"
+
 # The Pi runs under the C locale, which makes the JVM pick ASCII for stdout
 # and turn every non-ASCII character in a log line into '?'.
 JVM_OPTS=(
     "-Xmx$HEAP"
+    # SerialGC has the smallest footprint and least overhead on a tiny heap and
+    # a slow CPU. The default (G1) runs background GC threads this box cannot
+    # spare and reserves more memory, which pushes a 416 MB Pi into swap.
+    "-XX:+UseSerialGC"
+    "-XX:MaxGCPauseMillis=100"
     "-Dfile.encoding=UTF-8"
     "-Dstdout.encoding=UTF-8"
     "-Dstderr.encoding=UTF-8"
+    # Try the GPU pipeline first, fall back to software automatically.
+    "-Dprism.order=$PRISM_ORDER"
     "-Dprism.vsync=true"
+    # Cap the animation clock at 30 fps instead of 60. The pulsing rings and
+    # fades look the same to the eye at arm's length but cost half the repaints,
+    # which is the single biggest CPU saving on this board.
+    "-Djavafx.animation.pulse=30"
+    # Smaller glyph/image caches: the kiosk shows a handful of images and one
+    # font, so the default multi-megabyte caches are wasted RAM here.
+    "-Dprism.glyphCacheWidth=512"
+    "-Dprism.glyphCacheHeight=512"
 )
 
 if [ "${1:-}" = "--windowed" ]; then
