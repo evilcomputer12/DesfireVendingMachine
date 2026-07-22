@@ -54,6 +54,19 @@ public abstract class Iso14443Reader {
     protected abstract byte[] transceive(byte[] sendData, int bitsInLastByte)
             throws SpiException;
 
+    /**
+     * The SECOND chip-specific step: compute the 2-byte CRC_A over {@code data}.
+     *
+     * SELECT and RATS require a CRC appended to the frame; anticollision did
+     * not. The RC522 has a hardware CRC unit, but another reader might compute
+     * it differently, so -- exactly like transceive -- it's left abstract for
+     * the chip's subclass to provide. An abstract class can carry as many
+     * blanks as the design needs.
+     *
+     * @return the two CRC bytes (low byte first, then high), ready to append.
+     */
+    protected abstract byte[] calculateCrc(byte[] data) throws SpiException;
+
     // ═════════════════════════════════════════════════════════════════
     // THE TEMPLATE METHOD -- the fixed algorithm, shared by all chips.
     //

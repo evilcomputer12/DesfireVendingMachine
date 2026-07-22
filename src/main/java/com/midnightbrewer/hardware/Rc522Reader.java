@@ -14,6 +14,12 @@ public class Rc522Reader extends Iso14443Reader {
     private static final int PCD_IDLE       = 0x00; // "do nothing / cancel"
     private static final int PCD_TRANSCEIVE = 0x0C; // "send the FIFO, then receive"
 
+    // ── extra registers for the CRC coprocessor ──────────────────────
+    private static final int DIV_IRQ_REG      = 0x05; // CRCIrq lives here (bit 2)
+    private static final int CRC_RESULT_REG_L = 0x22; // CRC result, low byte
+    private static final int CRC_RESULT_REG_H = 0x21; // CRC result, high byte
+    private static final int PCD_CALCCRC      = 0x03; // "compute CRC over the FIFO"
+
     private final Rc522Driver driver;
 
     public Rc522Reader(Rc522Driver driver)
@@ -114,5 +120,55 @@ public class Rc522Reader extends Iso14443Reader {
             receivedData[i] = (byte)(driver.readRegister(FIFO_DATA_REG)); // always read from FIFO_DATA_REG
         }
         return receivedData;
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // calculateCrc -- fill the base's SECOND blank, using the RC522's CRC unit.
+    //
+    // Your translation of CalulateCRC. Like transceive, it's built from your
+    // driver methods. It loads bytes into the FIFO, tells the chip to compute a
+    // CRC over them, waits, and reads the 2-byte result out.
+    //
+    //   C:  Write_MFRC522(CommandReg, PCD_IDLE);   // stop whatever's running
+    //       ClearBitMask(DivIrqReg, 0x04);         // clear the CRCIrq flag
+    //       SetBitMask(FIFOLevelReg, 0x80);        // flush the FIFO
+    //       for (i=0;i<len;i++) Write_MFRC522(FIFODataReg, data[i]);
+    //       Write_MFRC522(CommandReg, PCD_CALCCRC);// go
+    //       // wait until DivIrqReg bit 2 (0x04, CRCIrq) is set
+    //       out[0] = Read_MFRC522(CRCResultRegL);
+    //       out[1] = Read_MFRC522(CRCResultRegH);
+    // ═════════════════════════════════════════════════════════════════
+    @Override
+    protected byte[] calculateCrc(byte[] data) throws SpiException {
+        // TODO 1: writeRegister(COMMAND_REG, PCD_IDLE);
+        //         clearBitMask(DIV_IRQ_REG, 0x04);      // clear CRCIrq
+        //         setBitMask(FIFO_LEVEL_REG, 0x80);     // flush FIFO
+        driver.writeRegister(COMMAND_REG, PCD_IDLE);
+        driver.clearBitMask(DIV_IRQ_REG, 0x04);    // clear CRCIrq
+        driver.setBitMask(FIFO_LEVEL_REG, 0x80);     // flush FIFO
+
+        // TODO 2: for-loop writing each byte of 'data' to FIFO_DATA_REG
+        //         (as an int: data[i] & 0xFF)
+        for(int i = 0; i < data.length; i++){
+            driver.writeRegister(FIFO_DATA_REG, data[i] & 0xFF);
+        }
+
+        // TODO 3: writeRegister(COMMAND_REG, PCD_CALCCRC);   // start the CRC
+        driver.writeRegister(COMMAND_REG, PCD_CALCCRC);
+
+        // TODO 4: wait until CRCIrq fires. Same wall-clock trick as transceive:
+        //         long deadline = System.nanoTime() + 20_000_000L;   // ~20 ms
+        //         while (System.nanoTime() < deadline
+        //                && (driver.readRegister(DIV_IRQ_REG) & 0x04) == 0) { }
+        long deadline = System.nanoTime() + 20_000_000L;   // ~20 ms
+        while (System.nanoTime() < deadline && (driver.readRegister(DIV_IRQ_REG) & 0x04) == 0) { }
+        // TODO 5: read the two result bytes and return them, low first:
+        //         byte lo = (byte) driver.readRegister(CRC_RESULT_REG_L);
+        //         byte hi = (byte) driver.readRegister(CRC_RESULT_REG_H);
+        //         return new byte[]{ lo, hi };
+        byte lo = (byte)driver.readRegister(CRC_RESULT_REG_L);
+        byte hi = (byte)driver.readRegister(CRC_RESULT_REG_H);
+        return new byte[]{lo, hi};
+
     }
 }
