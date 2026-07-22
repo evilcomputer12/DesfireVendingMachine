@@ -17,9 +17,15 @@ public class InformationBlock extends ProtocolBlock {
      * into the actual bytes on the wire, [pcb, ...inf...].
      */
     public byte[] encode(byte[] inf) {
+        // TODO: make a byte[inf.length + 1].
+        //       Put the PCB in slot 0:   frame[0] = (byte) pcb();
+        //       Copy inf in after it:    System.arraycopy(inf, 0, frame, 1, inf.length);
+        //       return frame;
+
         byte[] frame = new byte[inf.length + 1];
-        frame[0] = (byte) pcb();
+        frame[0] = (byte)pcb();
         System.arraycopy(inf, 0, frame, 1, inf.length);
+
         return frame;
     }
 }
