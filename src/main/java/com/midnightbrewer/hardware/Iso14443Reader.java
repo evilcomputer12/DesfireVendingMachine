@@ -32,6 +32,12 @@ public abstract class Iso14443Reader {
     /** REQA/WUPA are 7-bit short frames, not whole bytes. */
     private static final int REQA_BITS = 7;
 
+    /** Anticollision command, cascade level 1 (ISO 14443-3). */
+    private static final byte SEL_CL1 = (byte) 0x93;
+
+    /** Anticollision reply is 4 UID/CT bytes + 1 BCC checksum. */
+    private static final int ANTICOLL_LENGTH = 5;
+
     // ═════════════════════════════════════════════════════════════════
     // THE BLANK STEP -- the one thing each chip does differently.
     //
@@ -73,5 +79,46 @@ public abstract class Iso14443Reader {
     private boolean request(byte mode) throws SpiException {
         byte[] atqa = transceive(new byte[]{mode}, REQA_BITS);
         return atqa.length == ATQA_LENGTH;
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // M5 — anticollision (cascade level 1): read the card's UID.
+    //
+    // Call this right after isCardPresent() returns true (the card is now in
+    // READY and waiting to be identified). It is pure protocol -- it uses your
+    // abstract transceive(), so it works on any reader chip.
+    //
+    //   C:  Write_MFRC522(BitFramingReg, 0x00);   // full bytes -- your
+    //                                             //   transceive does this
+    //                                             //   with bitsInLastByte = 0
+    //       serNum[0] = 0x93;  serNum[1] = 0x20;
+    //       MFRC522_ToCard(PCD_TRANSCEIVE, serNum, 2, serNum, &unLen);
+    //       // then verify: serNum[0]^serNum[1]^serNum[2]^serNum[3] == serNum[4]
+    //
+    // Returns the 5-byte reply (4 UID/CT bytes + BCC), or an empty array if
+    // nothing valid came back.
+    // ═════════════════════════════════════════════════════════════════
+    public byte[] anticollision() throws SpiException {
+        // TODO 1: send { SEL_CL1, 0x20 } with FULL-byte framing (bits = 0):
+        //         byte[] resp = transceive(new byte[]{SEL_CL1, 0x20}, 0);
+        byte[] resp = transceive(new byte[]{SEL_CL1, 0x20}, 0);
+
+        // TODO 2: a valid reply is exactly ANTICOLL_LENGTH bytes.
+        //         If not, return new byte[0].
+        if(resp.length != ANTICOLL_LENGTH) {
+            return new byte[0];
+        }
+
+        // TODO 3: verify the BCC. XOR the first four bytes together; the result
+        //         must equal the fifth (resp[4]). If it doesn't, the read was
+        //         garbled -> return new byte[0].
+        //         (byte bcc = (byte)(resp[0]^resp[1]^resp[2]^resp[3]); ...)
+        byte bcc = (byte)(resp[0]^resp[1]^resp[2]^resp[3]);
+        if(bcc != resp[4]) {
+            return new byte[0];
+        }
+
+        // TODO 4: return resp.
+        return resp;
     }
 }

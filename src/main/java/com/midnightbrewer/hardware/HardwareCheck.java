@@ -50,6 +50,18 @@ public final class HardwareCheck {
             System.out.printf("card detected in %d / 15 polls%n", hits);
             if (hits > 0) {
                 System.out.println("  -> YOUR Rc522Reader detected a real card. M3 works on silicon.");
+
+                // ── M5: read the UID via anticollision ───────────────
+                if (reader.isCardPresent()) {          // wake the card to READY
+                    byte[] uid = reader.anticollision();
+                    if (uid.length == 5) {
+                        System.out.printf("anticollision      = %02X %02X %02X %02X (BCC %02X)%n",
+                                uid[0], uid[1], uid[2], uid[3], uid[4]);
+                        System.out.println("  -> YOUR reader read the card's UID. M5 anticollision works.");
+                    } else {
+                        System.out.println("anticollision returned nothing yet (fill the TODOs).");
+                    }
+                }
             } else {
                 System.out.println("  -> no card seen. Is one flat on the antenna?");
             }
