@@ -51,15 +51,21 @@ public final class HardwareCheck {
             if (hits > 0) {
                 System.out.println("  -> YOUR Rc522Reader detected a real card. M3 works on silicon.");
 
-                // ── M5: read the UID via anticollision ───────────────
+                // ── M5: full activation (anticollision + SELECT + cascade + RATS) ──
                 if (reader.isCardPresent()) {          // wake the card to READY
-                    byte[] uid = reader.anticollision();
-                    if (uid.length == 5) {
-                        System.out.printf("anticollision      = %02X %02X %02X %02X (BCC %02X)%n",
-                                uid[0], uid[1], uid[2], uid[3], uid[4]);
-                        System.out.println("  -> YOUR reader read the card's UID. M5 anticollision works.");
-                    } else {
-                        System.out.println("anticollision returned nothing yet (fill the TODOs).");
+                    try {
+                        ActivatedCard card = reader.activate();
+                        System.out.println("UID  = " + card.uidHex());
+                        System.out.printf("SAK  = 0x%02X%n", card.sak());
+                        byte[] ats = card.ats();
+                        StringBuilder atsHex = new StringBuilder();
+                        for (byte b : ats) {
+                            atsHex.append(String.format("%02X ", b));
+                        }
+                        System.out.println("ATS  = " + atsHex.toString().trim());
+                        System.out.println("  -> YOUR reader activated the card. M5 complete on silicon.");
+                    } catch (RuntimeException e) {
+                        System.out.println("activate() not finished yet: " + e.getMessage());
                     }
                 }
             } else {

@@ -32,8 +32,22 @@ public abstract class Iso14443Reader {
     /** REQA/WUPA are 7-bit short frames, not whole bytes. */
     private static final int REQA_BITS = 7;
 
-    /** Anticollision command, cascade level 1 (ISO 14443-3). */
+    /** Anticollision/SELECT command bytes for the two cascade levels. */
     private static final byte SEL_CL1 = (byte) 0x93;
+    private static final byte SEL_CL2 = (byte) 0x95;
+
+    /** NVB byte that turns an anticollision into a SELECT (full UID follows). */
+    private static final byte SELECT_NVB = 0x70;
+
+    /** SAK bit 3: "the UID is not complete, do the next cascade level". */
+    private static final int CASCADE_BIT = 0x04;
+
+    /** RATS: request ISO-14443-4. PARAM 0x50 = FSDI 5 (our frame size), CID 0. */
+    private static final byte RATS_CMD = (byte) 0xE0;
+    private static final byte RATS_PARAM = 0x50;
+
+    /** The cascade tag that prefixes a 7-byte UID's first anticollision reply. */
+    private static final byte CASCADE_TAG = (byte) 0x88;
 
     /** Anticollision reply is 4 UID/CT bytes + 1 BCC checksum. */
     private static final int ANTICOLL_LENGTH = 5;
@@ -111,10 +125,10 @@ public abstract class Iso14443Reader {
     // Returns the 5-byte reply (4 UID/CT bytes + BCC), or an empty array if
     // nothing valid came back.
     // ═════════════════════════════════════════════════════════════════
-    public byte[] anticollision() throws SpiException {
-        // TODO 1: send { SEL_CL1, 0x20 } with FULL-byte framing (bits = 0):
-        //         byte[] resp = transceive(new byte[]{SEL_CL1, 0x20}, 0);
-        byte[] resp = transceive(new byte[]{SEL_CL1, 0x20}, 0);
+    public byte[] anticollision(byte selCode) throws SpiException {
+        // Now takes selCode so it works at BOTH levels: SEL_CL1 (0x93) reads the
+        // first UID bytes, SEL_CL2 (0x95) reads the rest of a 7-byte UID.
+        byte[] resp = transceive(new byte[]{selCode, 0x20}, 0);
 
         // TODO 2: a valid reply is exactly ANTICOLL_LENGTH bytes.
         //         If not, return new byte[0].
@@ -133,5 +147,112 @@ public abstract class Iso14443Reader {
 
         // TODO 4: return resp.
         return resp;
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // M5 — SELECT: send the UID back, get the card's SAK.
+    //
+    //   C:  buffer[0]=selCode; buffer[1]=0x70;         // SELECT, not anticoll
+    //       for(i=0;i<5;i++) buffer[i+2] = anticoll[i]; // the 4 UID + BCC
+    //       CalulateCRC(buffer, 7, &buffer[7]);         // 2 CRC bytes -> 9 total
+    //       ToCard(...);  // reply = SAK(1) + CRC(2) = 3 bytes (recvBits 0x18)
+    //       SAK = buffer[0];
+    //
+    // @param anticoll the 5-byte anticollision reply (4 UID/CT bytes + BCC)
+    // @return the SAK byte (0..255), or -1 if the reply was malformed
+    // ═════════════════════════════════════════════════════════════════
+    public int select(byte selCode, byte[] anticoll) throws SpiException {
+        // TODO 1: build a 7-byte frame: { selCode, SELECT_NVB, then the 5
+        //         bytes of anticoll }. (Make a byte[7]; set [0],[1]; then
+        //         System.arraycopy(anticoll, 0, frame, 2, 5); )
+        byte[] frame7 = new byte[7];
+        frame7[0] = selCode;
+        frame7[1] = SELECT_NVB;
+        System.arraycopy(anticoll, 0, frame7, 2, 5);
+        // TODO 2: byte[] crc = calculateCrc(frame7);   // your CRC method
+        //         Make a byte[9]: the 7 frame bytes then crc[0], crc[1].
+        //         (arraycopy the 7 in, then set [7]=crc[0], [8]=crc[1])
+        byte[] crc = calculateCrc(frame7);
+        byte[] frame9 = new byte[9];
+        System.arraycopy(frame7, 0, frame9, 0, 7);
+        frame9[7] = crc[0];
+        frame9[8] = crc[1];
+        // TODO 3: byte[] reply = transceive(frame9, 0);   // full bytes
+        byte[] reply = transceive(frame9, 0);
+        // TODO 4: a good reply is 3 bytes (SAK + 2 CRC). If reply.length < 1
+        //         return -1; else return reply[0] & 0xFF;
+        if(reply.length < 1) {
+            return -1;
+        } else{
+            return reply[0] & 0xFF;
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // M5 — RATS: ask to speak ISO-14443-4; the card returns its ATS.
+    //
+    //   C:  req[0]=0xE0; req[1]=0x50; CalulateCRC(req,2,&req[2]); ToCard(...)
+    //
+    // @return the ATS bytes (empty array if the card refused)
+    // ═════════════════════════════════════════════════════════════════
+    public byte[] rats() throws SpiException {
+        // TODO 1: byte[] header = { RATS_CMD, RATS_PARAM };
+        byte[] header = {RATS_CMD, RATS_PARAM};
+        // TODO 2: byte[] crc = calculateCrc(header);
+        //         byte[] frame = { RATS_CMD, RATS_PARAM, crc[0], crc[1] };
+        byte[] crc = calculateCrc(header);
+        byte[] frame = {RATS_CMD, RATS_PARAM, crc[0], crc[1]};
+        
+        // TODO 3: return transceive(frame, 0);
+        return transceive(frame, 0);
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // M5 — activate(): the whole sequence, as a TEMPLATE METHOD.
+    //
+    // 'final' so a subclass can't reorder the protocol. It orchestrates the
+    // steps you built:
+    //   level 1: anticollision -> select -> SAK
+    //   if the SAK's cascade bit is set, the UID is 7 bytes: do level 2 too
+    //   then RATS
+    // and assembles the real UID:
+    //   - a 4-byte card: just anticoll1[0..3]
+    //   - a 7-byte card: anticoll1[1..3]  (skip the 0x88 cascade tag)
+    //                    + anticoll2[0..3]
+    // ═════════════════════════════════════════════════════════════════
+    public final ActivatedCard activate() throws SpiException {
+        // TODO 1: byte[] ac1 = anticollision(SEL_CL1);
+        //         if (ac1.length == 0) throw new SpiException("anticollision CL1 failed");
+        //         int sak1 = select(SEL_CL1, ac1);
+        byte[] ac1 = anticollision(SEL_CL1);
+        if(ac1.length == 0){
+            throw new SpiException("anticollision CL1 failed");
+        }
+        int sak1 = select(SEL_CL1, ac1);
+
+        // TODO 2: FOUR-byte UID case -- if ((sak1 & CASCADE_BIT) == 0):
+        //         byte[] uid = { ac1[0], ac1[1], ac1[2], ac1[3] };
+        //         return new ActivatedCard(uid, sak1, rats());
+        if((sak1 & CASCADE_BIT) == 0){
+            byte[] uid4 = {ac1[0], ac1[1], ac1[2], ac1[3]};
+            return new ActivatedCard(uid4, sak1, rats());
+        }
+
+        // TODO 3: SEVEN-byte UID case (cascade bit set):
+        //         byte[] ac2 = anticollision(SEL_CL2);
+        //         int sak2 = select(SEL_CL2, ac2);
+        //         Assemble the 7-byte uid: ac1[1],ac1[2],ac1[3], ac2[0..3].
+        //         return new ActivatedCard(uid7, sak2, rats());
+
+        byte[] ac2 = anticollision(SEL_CL2);
+        if(ac2.length == 0){
+            throw new SpiException("anticollision CL2 failed");
+        }
+        int sak2 = select(SEL_CL2, ac2);
+        if((sak2 & CASCADE_BIT) == 0){
+            byte[] uid7 = {ac1[1], ac1[2], ac1[3], ac2[0], ac2[1], ac2[2], ac2[3]};
+            return new ActivatedCard(uid7, sak2, rats());
+        }
+        throw new SpiException("cannot find a valid UID: cascade bit set on CL2 SAK");
     }
 }
