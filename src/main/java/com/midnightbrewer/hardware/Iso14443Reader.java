@@ -255,4 +255,32 @@ public abstract class Iso14443Reader {
         }
         throw new SpiException("cannot find a valid UID: cascade bit set on CL2 SAK");
     }
+
+    // ═════════════════════════════════════════════════════════════════
+    // M6 — exchange(): send a payload as a CRC-protected T=CL frame and return
+    // the reply's payload (with its 2 CRC bytes stripped).
+    //
+    // This is the same "append CRC, transceive" you already did inside select()
+    // and rats(), pulled out as a reusable primitive. The ISO-DEP channel sits
+    // on top of it: it hands us [PCB + apdu], we handle the CRC and the wire.
+    // ═════════════════════════════════════════════════════════════════
+    public byte[] exchange(byte[] payload) throws SpiException {
+        // TODO 1: byte[] crc = calculateCrc(payload);
+        byte[] crc = calculateCrc(payload);
+        // TODO 2: byte[] frame = new byte[payload.length + 2];
+        //         arraycopy payload in; frame[payload.length] = crc[0];
+        //         frame[payload.length + 1] = crc[1];
+        byte[] frame = new byte[payload.length + 2];
+        System.arraycopy(payload, 0, frame, 0, payload.length);
+        frame[payload.length] = crc[0];
+        frame[payload.length + 1] = crc[1];
+        // TODO 3: byte[] reply = transceive(frame, 0);
+        byte[] reply = transceive(frame,0);
+        // TODO 4: if (reply.length < 2) return new byte[0];
+        //         return java.util.Arrays.copyOf(reply, reply.length - 2);  // drop reply CRC
+        if(reply.length < 2) {
+            return new byte[0];
+        }
+        return java.util.Arrays.copyOf(reply, reply.length - 2);
+    }
 }

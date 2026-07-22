@@ -64,6 +64,26 @@ public final class HardwareCheck {
                         }
                         System.out.println("ATS  = " + atsHex.toString().trim());
                         System.out.println("  -> YOUR reader activated the card. M5 complete on silicon.");
+
+                        // ── M6: send an APDU over ISO-DEP ────────────
+                        IsoDepChannel channel = new IsoDepChannel(reader);
+                        // ISO-7816 wrapped DESFire GetVersion: 90 60 00 00 00
+                        byte[] getVersion = {(byte) 0x90, 0x60, 0x00, 0x00, 0x00};
+                        byte[] resp = channel.transceive(getVersion);
+                        StringBuilder rHex = new StringBuilder();
+                        for (byte b : resp) {
+                            rHex.append(String.format("%02X ", b));
+                        }
+                        System.out.println("GetVersion resp = " + rHex.toString().trim());
+                        if (resp.length >= 2 && (resp[resp.length - 2] & 0xFF) == 0x91) {
+                            int sw2 = resp[resp.length - 1] & 0xFF;
+                            System.out.printf("  -> DESFire answered (status 0x%02X). M6 ISO-DEP works!%n", sw2);
+                            if (sw2 == 0xAF) {
+                                System.out.println("     (0xAF = more frames -- the full version needs the M7 loop)");
+                            }
+                        } else if (resp.length == 0) {
+                            System.out.println("  -> empty response (fill the M6 TODOs).");
+                        }
                     } catch (RuntimeException e) {
                         System.out.println("activate() not finished yet: " + e.getMessage());
                     }
