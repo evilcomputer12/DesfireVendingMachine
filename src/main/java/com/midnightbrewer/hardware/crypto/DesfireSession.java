@@ -21,8 +21,6 @@ public class DesfireSession {
 
     private static byte[] deriveSessionKey(byte[] authKey, byte[] rndA, byte[] rndB, SessionKeyType isEncKeyOrMacKey) {
         byte[] SV = new byte[32];
-        byte[] SK = new byte[16];
-        
         if(rndA.length != 16 || rndB.length != 16) {
             throw new IllegalArgumentException("Random numbers must be 16 bytes for AES-128");
         }
@@ -47,8 +45,7 @@ public class DesfireSession {
         System.arraycopy(rndA, 8, SV, cnt, 8); // Copy the remaining 8 bytes of rndA to SV
         cnt += 8;
         byte[] sk = new AesCmac(authKey).compute(SV); // Derive the session key using AES-CMAC with the authentication key and SV
-        System.arraycopy(sk, 0, SK, 0, SK.length);
-        return SK.clone();
+        return sk;
     }
     public byte[] encKey() { 
         return keyEnc.clone(); 

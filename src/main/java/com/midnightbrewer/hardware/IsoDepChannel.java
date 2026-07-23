@@ -20,7 +20,7 @@ import java.util.Arrays;
  * (no chaining of huge payloads), and we assume the card replies promptly
  * (no S-block "wait" handling). Fine for DESFire's small command frames.
  */
-public class IsoDepChannel {
+public class IsoDepChannel implements ApduChannel {
 
     /** I-block PCB base; the low bit carries the block number. */
     private static final int IBLOCK_PCB = 0x02;
