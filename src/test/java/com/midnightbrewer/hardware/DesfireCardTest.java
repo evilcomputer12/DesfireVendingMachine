@@ -1,57 +1,68 @@
 package com.midnightbrewer.hardware;
 
-import org.junit.jupiter.api.Test;
-
 import java.util.Arrays;
 import java.util.HexFormat;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
-/**
- * Proves AuthenticateEV2First against the replay vectors -- no reader, no card.
- *
- * The fake channel plays the card's two encrypted replies; a fixed RandomSource
- * pins RndA so the handshake is deterministic. If the whole thing runs without
- * throwing (the RndA' check passed) and TI comes out right, the handshake is
- * provably correct before it ever touches silicon.
- */
-class DesfireCardTest {
+// The test IS its own fake card + fake RNG: it implements both seams, so
+// new DesfireCard(this, this) plugs the test straight into the card.
+public class DesfireCardTest implements RandomSource, ApduChannel {
 
-    private static final HexFormat HEX = HexFormat.of();
+    /*
+    Full replay (fixed nonces — offline handshake test, fake channel + fixed RndA):
+    key      = 00112233445566778899aabbccddeeff
+    RndA     = a0a1a2a3a4a5a6a7a8a9aaabacadaeaf   (pinned by nextBytes)
+    RndB     = b0b1b2b3b4b5b6b7b8b9babbbcbdbebf
 
-    private static byte[] h(String s) {
-        return HEX.parseHex(s);
+    card step-1 payload (encRndB)  = eab6822fe368d5bc9895fb2558b38dde
+    you send in step 2  (encAB)    = cf086a82c0b745a749daabb28a7a8db332272f9e5fdc37a4746064f25b7c2ca7
+    card step-2 payload (encResp)  = 4e08e447d74810052caa1c5b6c60343f51f6e901ad171e677b100d3a34c925e4
+    → extracted TI                 = 11223344
+    */
+
+    byte[] key   = HexFormat.of().parseHex("00112233445566778899aabbccddeeff");
+    byte[] rndA  = HexFormat.of().parseHex("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf");
+    byte[] encAB = HexFormat.of().parseHex("cf086a82c0b745a749daabb28a7a8db332272f9e5fdc37a4746064f25b7c2ca7");
+    byte[] tiExpected = HexFormat.of().parseHex("11223344");
+
+    // Replies carry the trailing status word (91af / 9100), because the card
+    // strips the last 2 bytes off every reply.
+    byte[] selectReply  = HexFormat.of().parseHex("9100");
+    byte[] step1Reply   = HexFormat.of().parseHex("eab6822fe368d5bc9895fb2558b38dde" + "91af");
+    byte[] step2Reply   = HexFormat.of().parseHex("4e08e447d74810052caa1c5b6c60343f51f6e901ad171e677b100d3a34c925e4" + "9100");
+
+    @Override
+    public byte[] nextBytes(int n) {
+        return rndA; // pin RndA so the handshake is deterministic
     }
 
-    private static String hex(byte[] b) {
-        return HEX.formatHex(b);
+    @Override
+    public byte[] transceive(byte[] apdu) throws SpiException {
+        // dispatch on the INS byte (apdu[1]) — robust to keyNo and Lc.
+        switch (apdu[1]) {
+            case (byte) 0x5A: // SelectApplication
+                return selectReply;
+            case (byte) 0x71: // AuthenticateEV2First, step 1
+                return step1Reply;
+            case (byte) 0xAF: // step 2: check what we SENT, then reply
+                byte[] sentEncAB = Arrays.copyOfRange(apdu, 5, apdu.length - 1);
+                assertArrayEquals(encAB, sentEncAB, "step-2 ciphertext (encAB) is wrong");
+                return step2Reply;
+            default:
+                throw new SpiException("Unexpected APDU: " + Arrays.toString(apdu));
+        }
     }
 
     @Test
-    void authenticateEv2First_matchesReplayVectors() throws SpiException {
-        byte[] key = h("00112233445566778899aabbccddeeff");
-        byte[] rndA = h("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf");
+    public void authenticateEv2First_matchesReplayVectors() throws SpiException {
+        DesfireCard card = new DesfireCard(this, this);
 
-        FakeApduChannel channel = new FakeApduChannel();
-        // step-1 reply: encRndB + status 91 AF
-        channel.queueReply(h("eab6822fe368d5bc9895fb2558b38dde" + "91af"));
-        // step-2 reply: encResp (TI ‖ rotL(RndA) ‖ caps) + status 91 00
-        channel.queueReply(h("4e08e447d74810052caa1c5b6c60343f"
-                + "51f6e901ad171e677b100d3a34c925e4" + "9100"));
+        card.selectApplication(new byte[]{0x01, 0x02, 0x03});
+        card.authenticateEv2First((byte) 0x00, key); // no throw == RndA' verified
 
-        RandomSource fixedRndA = n -> rndA; // pin RndA -> deterministic handshake
-
-        DesfireCard card = new DesfireCard(channel, fixedRndA);
-        card.authenticateEv2First((byte) 2, key); // no throw == RndA' verified
-
-        // the card's TI came out of the decrypted step-2 reply
-        assertEquals("11223344", hex(card.getTi()));
-
-        // and what we SENT in step 2 was the right ciphertext.
-        // step-2 APDU = 90 AF 00 00 20 <encAB(32)> 00, so encAB is bytes [5..37].
-        byte[] step2 = channel.sent.get(1);
-        assertEquals("cf086a82c0b745a749daabb28a7a8db3"
-                + "32272f9e5fdc37a4746064f25b7c2ca7",
-                hex(Arrays.copyOfRange(step2, 5, 37)));
+        assertArrayEquals(tiExpected, card.getTi(),
+                "Transaction Identifier (TI) does not match expected value");
     }
 }

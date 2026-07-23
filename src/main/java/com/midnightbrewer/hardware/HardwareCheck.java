@@ -16,6 +16,12 @@ public final class HardwareCheck {
     private HardwareCheck() {
     }
 
+    // How YOUR card was personalized -- these MUST match the application the
+    // top-up side created, or auth fails with an RndA/permission error.
+    private static final byte[] APP_AID      = {0x03, 0x02, 0x01}; // AID 0x010203, LSB-first
+    private static final byte   APP_KEY_NO   = 0x02;
+    private static final byte   APP_KEY_BYTE = 0x22;              // key = 16 x 0x22
+
     public static void main(String[] args) throws Exception {
         System.out.println("Opening the reader (your Pi4jSpiLink)...");
 
@@ -84,6 +90,30 @@ public final class HardwareCheck {
                         } else if (resp.length == 0) {
                             System.out.println("  -> empty response (fill the M6 TODOs).");
                         }
+
+                        // Drain GetVersion's remaining frames so the card goes
+                        // idle again (it chains 3: HW, SW, UID -> AF, AF, 00).
+                        byte[] af = {(byte) 0x90, (byte) 0xAF, 0x00, 0x00, 0x00};
+                        channel.transceive(af);
+                        channel.transceive(af);
+
+                        // ── M7c: YOUR crypto authenticating with the card ──
+                        try {
+                            DesfireCard desfire =
+                                    new DesfireCard(channel, RandomSource.secure());
+                            desfire.selectApplication(APP_AID);
+                            byte[] appKey = new byte[16];
+                            java.util.Arrays.fill(appKey, APP_KEY_BYTE);
+                            desfire.authenticateEv2First(APP_KEY_NO, appKey);
+                            System.out.println("  -> MUTUAL AUTH OK. TI = "
+                                    + hex(desfire.getTi()));
+                            System.out.println("     M7c complete on silicon: "
+                                    + "YOUR crypto authenticated a real DESFire!");
+                        } catch (SpiException e) {
+                            System.out.println("  -> M7c auth failed: " + e.getMessage());
+                            System.out.println("     (check APP_AID / APP_KEY_NO / "
+                                    + "APP_KEY_BYTE match how the card was set up)");
+                        }
                     } catch (RuntimeException e) {
                         System.out.println("activate() not finished yet: " + e.getMessage());
                     }
@@ -101,6 +131,14 @@ public final class HardwareCheck {
      * (softReset, antennaOn). TxAutoReg = 0x40 (force 100% ASK) and
      * ModeReg = 0x3D (CRC preset) are the ones a Type A card actually needs.
      */
+    private static String hex(byte[] b) {
+        StringBuilder sb = new StringBuilder();
+        for (byte x : b) {
+            sb.append(String.format("%02X", x));
+        }
+        return sb.toString();
+    }
+
     private static void initChip(Rc522Driver driver) throws SpiException {
         driver.writeRegister(0x2A, 0x8D); // TModeReg    } the response
         driver.writeRegister(0x2B, 0x3E); // TPrescaler  } timer, ~300 ms
