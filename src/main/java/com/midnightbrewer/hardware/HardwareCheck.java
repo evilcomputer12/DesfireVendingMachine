@@ -21,6 +21,8 @@ public final class HardwareCheck {
     private static final byte[] APP_AID      = {0x03, 0x02, 0x01}; // AID 0x010203, LSB-first
     private static final byte   APP_KEY_NO   = 0x02;
     private static final byte   APP_KEY_BYTE = 0x22;              // key = 16 x 0x22
+    private static final byte   VALUE_FILE_NO = 0x01;            // balance value file
+    private static final int    DEBIT_CENTS   = 10;             // small test debit
 
     public static void main(String[] args) throws Exception {
         System.out.println("Opening the reader (your Pi4jSpiLink)...");
@@ -109,6 +111,23 @@ public final class HardwareCheck {
                                     + hex(desfire.getTi()));
                             System.out.println("     M7c complete on silicon: "
                                     + "YOUR crypto authenticated a real DESFire!");
+
+                            // ── M7d-2: read the real balance ──
+                            int cents = desfire.getValue(VALUE_FILE_NO);
+                            System.out.printf("  -> balance = %d cents (%.2f EUR)%n",
+                                    cents, cents / 100.0);
+                            System.out.println("     M7d-2: YOUR stack read the real "
+                                    + "balance off the card.");
+
+                            // ── M7d-3: spend real money (debit + commit) ──
+                            System.out.printf("  debiting %d cents...%n", DEBIT_CENTS);
+                            desfire.debit(VALUE_FILE_NO, DEBIT_CENTS);   // stages it
+                            desfire.commitTransaction();                 // makes it permanent
+                            int after = desfire.getValue(VALUE_FILE_NO);
+                            System.out.printf("  -> balance %d -> %d cents (%.2f -> %.2f EUR)%n",
+                                    cents, after, cents / 100.0, after / 100.0);
+                            System.out.println("     M7d-3 COMPLETE: YOUR stack debited a "
+                                    + "real DESFire. The whole project runs end to end.");
                         } catch (SpiException e) {
                             System.out.println("  -> M7c auth failed: " + e.getMessage());
                             System.out.println("     (check APP_AID / APP_KEY_NO / "
