@@ -3,56 +3,57 @@ package com.midnightbrewer.payment;
 import com.midnightbrewer.card.AuthenticationFailedException;
 import com.midnightbrewer.card.CardCommunicationException;
 import com.midnightbrewer.card.CardException;
-import com.midnightbrewer.card.CardStatusException;
 import com.midnightbrewer.card.InsufficientFundsException;
 import com.midnightbrewer.model.Drink;
 
-import com.midnightbrewer.reference.desfire.DesfireApduChannel;
-import com.midnightbrewer.reference.desfire.DesfireCard;
-import com.midnightbrewer.reference.desfire.DesfireStatus;
-import com.midnightbrewer.reference.desfire.RandomSource;
-import com.midnightbrewer.reference.desfire.ValueFileSettings;
-import com.midnightbrewer.reference.desfire.WalletProfile;
-import com.midnightbrewer.reference.diag.ProtocolTrace;
-import com.midnightbrewer.reference.error.DesfireStatusException;
-import com.midnightbrewer.reference.error.NfcException;
-import com.midnightbrewer.reference.iso14443.ActivatedCard;
-import com.midnightbrewer.reference.iso14443.Rc522IsoDepTransceiver;
-import com.midnightbrewer.reference.pcd.Rc522Driver;
-import com.midnightbrewer.reference.pcd.Register;
-import com.midnightbrewer.reference.spi.Pi4jSpiLink;
-import com.midnightbrewer.reference.util.Timebase;
+import com.midnightbrewer.hardware.ActivatedCard;
+import com.midnightbrewer.hardware.DesfireCard;
+import com.midnightbrewer.hardware.IsoDepChannel;
+import com.midnightbrewer.hardware.Pi4jSpiLink;
+import com.midnightbrewer.hardware.RandomSource;
+import com.midnightbrewer.hardware.Rc522Driver;
+import com.midnightbrewer.hardware.Rc522Reader;
+import com.midnightbrewer.hardware.SpiException;
 
+import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The real {@link PaymentTerminal}: charges a DESFire card through the
- * reference RC522 stack.
+ * hand-written {@code com.midnightbrewer.hardware} stack.
  *
  * <p>This is an <em>adapter</em>. It implements the kiosk's small
- * {@code PaymentTerminal} contract and translates it into the reference
- * library's very different vocabulary -- {@code Rc522Driver},
- * {@code Iso14443Transceiver}, {@code DesfireCard} -- and translates the
- * reference's exceptions back into the kiosk's. Neither side knows the other's
- * types. That is the whole reason the UI could be written and tested against a
- * simulator long before this class existed: the UI depends on the interface,
- * and this is just one more thing that satisfies it.
+ * {@code PaymentTerminal} contract and translates it into the hardware stack's
+ * vocabulary -- {@code Rc522Driver}, {@code Rc522Reader}, {@code IsoDepChannel},
+ * {@code DesfireCard} -- and translates that stack's {@code SpiException} back
+ * into the kiosk's {@code CardException} family. Neither side knows the other's
+ * types, which is exactly why the whole UI could be built and tested against
+ * {@link SimulatedPaymentTerminal} long before any of this existed: the UI
+ * depends on the interface, and this is just one more thing that satisfies it.
  *
  * <p>The reader is opened once, at construction, because bringing up Pi4J and
  * the RC522 takes over a second and a kiosk should pay that at boot, not on
  * every tap. Each transaction runs on a single background thread so
- * {@link #startTransaction} can return immediately; the callbacks are
- * delivered from that thread, and {@link UIController}'s listener marshals them
- * onto the JavaFX thread.
+ * {@link #startTransaction} can return immediately; the callbacks are delivered
+ * from that thread, and {@link com.midnightbrewer.ui.UIController}'s listener
+ * marshals them onto the JavaFX thread.
  */
 public class DesfirePaymentTerminal implements PaymentTerminal {
 
+    // How the card was personalised (matches HardwareCheck and app_config.dart).
+    private static final byte[] APP_AID       = {0x03, 0x02, 0x01}; // AID 0x010203, LSB-first
+    private static final byte   USER_KEY_NO   = 0x02;
+    private static final byte   VALUE_FILE_NO = 0x01;
+
+    // Registers used by the init sequence (same as HardwareCheck.initChip).
+    private static final int TX_CONTROL_REG = 0x14;
+    private static final int ANTENNA_BITS   = 0x03;
+
     private final Pi4jSpiLink link;
     private final Rc522Driver driver;
-    private final Rc522IsoDepTransceiver transceiver;
-    private final WalletProfile profile;
+    private final Rc522Reader reader;
 
     private final ExecutorService worker =
             Executors.newSingleThreadExecutor(r -> {
@@ -66,20 +67,41 @@ public class DesfirePaymentTerminal implements PaymentTerminal {
     private volatile boolean scanning = false;
 
     /** Opens the reader. Throws if there is no RC522 -- callers fall back to the simulator. */
-    public DesfirePaymentTerminal() throws NfcException {
-        this.profile = WalletProfile.defaults();
-        this.link = Pi4jSpiLink.openDefault();
-        this.driver = new Rc522Driver(link, Timebase.system(), ProtocolTrace.none());
-        driver.initialise();
-
-        int version = driver.version();
-        if (version == 0x00 || version == 0xFF) {
-            link.close();
-            throw new com.midnightbrewer.reference.error.TransportException(
-                    "RC522 not responding on SPI (VersionReg=0x"
-                            + Integer.toHexString(version) + ")");
+    public DesfirePaymentTerminal() throws SpiException {
+        this.link = new Pi4jSpiLink();
+        this.driver = new Rc522Driver(link);
+        try {
+            initReader();
+            int version = driver.version();
+            if (version != 0x91 && version != 0x92) {
+                throw new SpiException("RC522 not responding (VersionReg=0x"
+                        + Integer.toHexString(version) + ")");
+            }
+        } catch (SpiException e) {
+            quietClose();
+            throw e;
         }
-        this.transceiver = new Rc522IsoDepTransceiver(driver);
+        this.reader = new Rc522Reader(driver);
+    }
+
+    /** The MFRC522 register writes a Type A card needs (see HardwareCheck.initChip). */
+    private void initReader() throws SpiException {
+        driver.softReset();
+        sleep(50);
+        driver.writeRegister(0x2A, 0x8D); // TModeReg    } response timer,
+        driver.writeRegister(0x2B, 0x3E); // TPrescaler  } ~300 ms
+        driver.writeRegister(0x2C, 0x02); // TReloadH    }
+        driver.writeRegister(0x2D, 0x58); // TReloadL    }  (0x0258 = 600)
+        driver.writeRegister(0x15, 0x40); // TxAutoReg  -> force 100% ASK
+        driver.writeRegister(0x11, 0x3D); // ModeReg    -> CRC preset 0x6363
+        driver.writeRegister(0x26, 0x08); // RFCfgReg   -> RX gain
+        driver.antennaOn();
+    }
+
+    private static byte[] userKey() {
+        byte[] key = new byte[16];
+        Arrays.fill(key, (byte) 0x22);
+        return key;
     }
 
     @Override
@@ -99,22 +121,25 @@ public class DesfirePaymentTerminal implements PaymentTerminal {
     private void runTransaction(Drink drink, PaymentListener listener) {
         scanning = true;
         try {
+            // Fresh reader state each tap: softReset + antennaOn power-cycles the
+            // field, so the card is IDLE again and activate() runs cleanly even
+            // after a previous purchase.
+            initReader();
+
             if (!waitForCard()) {
                 return; // cancelled while polling; the UI already moved on
             }
 
-            ActivatedCard card = transceiver.activate();
-            String uid = card.uid().toString();
+            ActivatedCard card = reader.activate();
+            String uid = card.uidHex();
             listener.onCardDetected(uid);
 
-            DesfireCard desfire = new DesfireCard(
-                    new DesfireApduChannel(transceiver), RandomSource.secure(),
-                    ProtocolTrace.none());
+            DesfireCard desfire =
+                    new DesfireCard(new IsoDepChannel(reader), RandomSource.secure());
+            desfire.selectApplication(APP_AID);
+            desfire.authenticateEv2First(USER_KEY_NO, userKey());
 
-            desfire.selectApplication(profile.aid());
-            desfire.authenticateEv2First(profile.userKeyNo(), profile.appUserKey());
-
-            int balance = readOrCreateBalance(desfire);
+            int balance = desfire.getValue(VALUE_FILE_NO);
             listener.onBalanceRead(balance);
 
             int price = drink.getPriceCents();
@@ -125,92 +150,53 @@ public class DesfirePaymentTerminal implements PaymentTerminal {
 
             // The debit is provisional until the commit is acknowledged; only
             // then has the money actually moved and only then may we dispense.
-            desfire.debit(profile.fileNo(), price);
+            desfire.debit(VALUE_FILE_NO, price);
             desfire.commitTransaction();
-            int after = desfire.getValue(profile.fileNo());
+            int after = desfire.getValue(VALUE_FILE_NO);
 
             listener.onApproved(new PaymentReceipt(uid, drink, balance, after));
-        } catch (NfcException e) {
+        } catch (SpiException e) {
             listener.onDeclined(translate(e));
         } catch (RuntimeException e) {
             listener.onDeclined(new CardCommunicationException(
                     "unexpected reader error: " + e.getMessage(), e));
         } finally {
             scanning = false;
-            quietDeselect();
         }
     }
 
     /** Polls until a card is in the field or the transaction is cancelled. */
-    private boolean waitForCard() throws NfcException {
+    private boolean waitForCard() throws SpiException {
         while (!cancelled.get()) {
-            if (transceiver.isCardPresent()) {
+            if (reader.isCardPresent()) {
                 return true;
             }
-            try {
-                Thread.sleep(30);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return false;
-            }
+            sleep(30);
         }
         return false;
     }
 
     /**
-     * Reads the balance, creating the value file first if the application is
-     * present but the file is not -- the state a firmware-provisioned card is
-     * in. Mirrors the wallet demo and the Flutter top-up app.
+     * Turns a hardware-stack {@link SpiException} into the kiosk's vocabulary,
+     * so the UI never sees a {@code com.midnightbrewer.hardware.*} type.
+     *
+     * <p>Insufficient funds is caught earlier by the balance check, so here the
+     * common case worth naming is an authentication failure; everything else is
+     * a communication error (card pulled from the field, framing, bad MAC).
      */
-    private int readOrCreateBalance(DesfireCard desfire) throws NfcException {
-        try {
-            return desfire.getValue(profile.fileNo());
-        } catch (DesfireStatusException e) {
-            if (e.status() != DesfireStatus.FILE_NOT_FOUND.code()) {
-                throw e;
-            }
+    private CardException translate(SpiException e) {
+        String msg = e.getMessage() == null ? "reader error" : e.getMessage();
+        if (msg.contains("Authentication") || msg.contains("RndA")) {
+            return new AuthenticationFailedException(msg, USER_KEY_NO);
         }
-        // Creating a file needs the master key; reading the value needs the
-        // user key -- so re-authenticate across the two.
-        desfire.selectApplication(profile.aid());
-        desfire.authenticateEv2First(0, profile.appMasterKey());
-        desfire.createValueFile(ValueFileSettings.builder(profile.fileNo())
-                .accessRights(profile.accessRights())
-                .lowerLimit(profile.lowerLimit())
-                .upperLimit(profile.upperLimit())
-                .initialValue(profile.initialBalance())
-                .build());
-        desfire.selectApplication(profile.aid());
-        desfire.authenticateEv2First(profile.userKeyNo(), profile.appUserKey());
-        return desfire.getValue(profile.fileNo());
+        return new CardCommunicationException(msg, e);
     }
 
-    /**
-     * Turns a reference exception into the kiosk's vocabulary, so the UI never
-     * sees a {@code com.midnightbrewer.reference.*} type.
-     */
-    private CardException translate(NfcException e) {
-        if (e instanceof DesfireStatusException) {
-            int status = ((DesfireStatusException) e).status();
-            if (status == DesfireStatus.AUTHENTICATION_ERROR.code()) {
-                return new AuthenticationFailedException(e.getMessage(), profile.userKeyNo());
-            }
-            if (status == DesfireStatus.BOUNDARY_ERROR.code()) {
-                // The card refused a debit that would underflow -- treat as funds.
-                return new InsufficientFundsException(0, 0);
-            }
-            return new CardStatusException((byte) status, "DESFire command");
-        }
-        // Timeout, framing error, card pulled from the field, etc.
-        return new CardCommunicationException(e.getMessage(), e);
-    }
-
-    private void quietDeselect() {
+    private static void sleep(long ms) {
         try {
-            transceiver.deselect();
-        } catch (NfcException ignored) {
-            // The card is often already gone by the time we get here; that is
-            // not an error worth surfacing.
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -228,17 +214,19 @@ public class DesfirePaymentTerminal implements PaymentTerminal {
     public void close() {
         cancelled.set(true);
         worker.shutdownNow();
-        quietDeselect();
-        // Best effort: power the field down and release SPI. Nothing to do if
-        // it fails on the way out.
+        quietClose();
+    }
+
+    /** Best effort on the way out: power the field down and release SPI. */
+    private void quietClose() {
         try {
-            driver.antennaOff();
-        } catch (NfcException | RuntimeException ignored) {
-            // ignore
+            driver.clearBitMask(TX_CONTROL_REG, ANTENNA_BITS); // antenna off
+        } catch (SpiException | RuntimeException ignored) {
+            // nothing to do if it fails while shutting down
         }
         try {
             link.close();
-        } catch (NfcException | RuntimeException ignored) {
+        } catch (SpiException | RuntimeException ignored) {
             // ignore
         }
     }
