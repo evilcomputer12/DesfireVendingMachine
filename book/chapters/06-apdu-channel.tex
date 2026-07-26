@@ -1,0 +1,320 @@
+\chapter{The APDU channel}
+\label{ch:apdu}
+
+\chapterbrief
+  {Send your first real DESFire command and get an answer.}
+  {Composition and layering --- the last rung of the ladder.}
+  {A real DESFire reporting its own chip type.}
+
+\section{The problem}
+
+The card is activated. Now you want to send it commands. Those are
+\textbf{APDUs} (Application Protocol Data Units), and they need wrapping:
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily, node distance=6mm,
+   r/.style={draw=brewergrey, rounded corners=2pt, inner sep=4pt, minimum height=7mm}]
+  \node[r] (a) {\code{90 60 00 00 00}};
+  \node[font=\scriptsize\itshape, color=brewergrey, right=3mm of a] {your APDU};
+  \node[r, below=7mm of a] (b) {\code{02} \enspace \code{90 60 00 00 00}};
+  \node[font=\scriptsize\itshape, color=brewergrey, right=3mm of b]
+       {wrapped in an I-block (Ch.~\ref{ch:blocks})};
+  \node[r, below=7mm of b] (c) {\code{02} \enspace \code{90 60 00 00 00} \enspace \code{crc crc}};
+  \node[font=\scriptsize\itshape, color=brewergrey, right=3mm of c]
+       {CRC appended (Ch.~\ref{ch:reader})};
+  \draw[-{Stealth[length=4pt]}, brewernavy] (a) -- (b);
+  \draw[-{Stealth[length=4pt]}, brewernavy] (b) -- (c);
+\end{tikzpicture}
+\end{center}
+
+Someone has to own that wrapping --- and the block-number bookkeeping that goes
+with it.
+
+\subsection{The block number: a one-bit conversation counter}
+
+ISO-DEP puts a single bit in the I-block PCB that \textbf{alternates
+0,\,1,\,0,\,1\ldots} with each exchange. It exists to disambiguate
+retransmissions: if a reply is lost and you resend, the card can tell ``this is
+the same command again'' from ``this is the next command''.
+
+You must toggle it after every exchange. Get out of sync and the card ignores
+you --- which looks exactly like a dead card.
+
+\begin{concept}{State that should be impossible to get wrong}
+If the block number were a parameter every caller had to pass, someone would
+eventually pass the wrong one.
+
+Hide it inside the channel as \code{private} state and toggle it automatically.
+The bug becomes \emph{unrepresentable} rather than merely unlikely. That is the
+strongest form of encapsulation: not ``callers should not do this'' but
+``callers cannot''.
+\end{concept}
+
+\subsection{DESFire's APDU wrapping}
+
+DESFire natively speaks its own short frames, but also accepts them wrapped in
+ISO-7816 APDUs, which is what we use:
+
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize\sffamily, x=13mm, y=8mm]
+  \foreach \i/\lbl/\c in {0/{\code{90}}/brewerblue!12, 1/{\code{INS}}/breweramber!14,
+                          2/{\code{00}}/black!5, 3/{\code{00}}/black!5,
+                          4/{\code{Lc}}/brewergreen!12, 5/{\code{data...}}/brewergreen!8,
+                          6/{\code{00}}/black!5}{
+     \fill[\c] (\i,0) rectangle ++(1,1);
+     \draw[brewergrey] (\i,0) rectangle ++(1,1);
+     \node at (\i+0.5,0.5) {\lbl};
+  }
+  \node[color=brewergrey, font=\tiny, anchor=north] at (0.5,-0.15) {CLA};
+  \node[color=brewergrey, font=\tiny, anchor=north] at (1.5,-0.15) {command};
+  \node[color=brewergrey, font=\tiny, anchor=north] at (3.0,-0.15) {P1, P2};
+  \node[color=brewergrey, font=\tiny, anchor=north] at (4.5,-0.15) {length};
+  \node[color=brewergrey, font=\tiny, anchor=north] at (6.5,-0.15) {Le};
+\end{tikzpicture}
+\end{center}
+
+\hex{0x90} means ``DESFire native command, wrapped''. Replies end in a two-byte
+status word: \hex{91 00} for OK, \hex{91 AF} for ``more frames follow'', and
+various \hex{91 xx} errors. Appendix~\ref{app:vectors} lists them all.
+
+\section{Build it}
+
+\subsection{\texttt{ApduChannel} --- another seam}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+/**
+ * "Something that can carry an APDU to a card and bring back the reply."
+ *
+ * The same trick as SpiLink, one layer up. The DESFire logic you write in
+ * Part IV will depend only on THIS -- so it can be tested against a fake
+ * channel replaying canned card replies, with no reader and no card.
+ *
+ * That is not a nicety. Crypto is the one thing you cannot debug by staring
+ * at it, and this interface is what makes it testable offline.
+ */
+public interface ApduChannel {
+
+    /** Send one APDU, return the response (including its status word). */
+    byte[] transceive(byte[] apdu) throws SpiException;
+}
+\end{jcode}
+
+One method. That is the whole contract, and it is enough to make all of Part~IV
+testable.
+
+\subsection{\texttt{InformationBlock.encode} --- the block gains behaviour}
+
+Back in Chapter~\ref{ch:blocks} an I-block could only \code{describe()} itself.
+Now it does real work:
+
+\begin{jcode}
+    /**
+     * Encode this I-block into a frame: its PCB, then the data it carries.
+     */
+    public byte[] encode(byte[] inf) {
+        // TODO: byte[] frame of length inf.length + 1;
+        //       frame[0] = (byte) pcb();
+        //       copy inf in after it; return frame.
+        return null;
+    }
+\end{jcode}
+
+\begin{deeper}{Designs pay off later than you would like}
+The class you built two chapters ago, which looked like an academic exercise in
+polymorphism, is now the thing that formats your wire frames.
+
+That is the normal shape of good design: the structure was right before you knew
+what you would need it for. It is also why ``you aren't gonna need it'' is
+advice to apply to \emph{features}, not to \emph{structure}.
+\end{deeper}
+
+\subsection{\texttt{IsoDepChannel}}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+import java.util.Arrays;
+
+/**
+ * The ISO-14443-4 (ISO-DEP) channel: one APDU at a time, wrapped in an
+ * I-block.
+ *
+ * The OOP on show:
+ *   - COMPOSITION: it HAS-A reader (a channel is not a kind of reader).
+ *   - ENCAPSULATED STATE: the block number toggles and nobody outside can
+ *     touch it, or forget to.
+ *   - it USES the Chapter 4 hierarchy: an InformationBlock encodes the frame.
+ *
+ * Simplifications, fine for DESFire's small frames: one I-block per APDU, no
+ * chaining of large payloads, and no S-block "please wait" handling.
+ */
+public class IsoDepChannel implements ApduChannel {
+
+    /** I-block PCB base; the low bit carries the block number. */
+    private static final int IBLOCK_PCB = 0x02;
+
+    private final Iso14443Reader reader;  // composition
+    private int blockNumber = 0;          // private mutable state, owned here
+
+    public IsoDepChannel(Iso14443Reader reader) {
+        this.reader = reader;
+    }
+
+    /**
+     *   1. wrap the APDU in an I-block for the current block number
+     *   2. send it via the reader (which appends CRC and transceives)
+     *   3. toggle the block number for next time
+     *   4. the reply is [PCB, ...response...] -- strip the PCB
+     */
+    @Override
+    public byte[] transceive(byte[] apdu) throws SpiException {
+        // TODO 1: InformationBlock out =
+        //             new InformationBlock(IBLOCK_PCB | blockNumber);
+        //         byte[] frame = out.encode(apdu);
+        // TODO 2: byte[] reply = reader.exchange(frame);
+        // TODO 3: blockNumber ^= 1;    // toggle -- XOR with 1 flips a bit
+        // TODO 4: if (reply.length < 1)
+        //             throw new SpiException("empty ISO-DEP reply");
+        //         return Arrays.copyOfRange(reply, 1, reply.length);
+        return new byte[0];
+    }
+}
+\end{jcode}
+
+\subsection{\texttt{Iso14443Reader.exchange} --- the reusable primitive}
+
+You have written ``append a CRC and transceive'' twice already, inside
+\code{select()} and \code{rats()}. Pull it out:
+
+\begin{jcode}
+    // =================================================================
+    // exchange() -- send a payload as a CRC-protected T=CL frame, return the
+    // reply with its CRC stripped.
+    //
+    // The ISO-DEP channel sits on top of this: it hands us [PCB + apdu], we
+    // handle the CRC and the wire.
+    // =================================================================
+    public byte[] exchange(byte[] payload) throws SpiException {
+        // TODO 1: byte[] crc = calculateCrc(payload);
+        // TODO 2: build frame = payload followed by crc[0], crc[1].
+        // TODO 3: byte[] reply = transceive(frame, 0);
+        // TODO 4: if (reply.length < 2) return new byte[0];
+        //         return Arrays.copyOf(reply, reply.length - 2);
+        return new byte[0];
+    }
+\end{jcode}
+
+\section{The layer cake, complete}
+
+You have now built six layers, each speaking only to its neighbours.
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,
+  L/.style={draw=brewernavy, rounded corners=2pt, minimum width=54mm,
+            minimum height=8mm, inner sep=3pt},
+  S/.style={draw=brewerblue, fill=brewerblue!8, rounded corners=2pt,
+            minimum width=54mm, minimum height=7mm, inner sep=3pt},
+  note/.style={font=\scriptsize\itshape, color=brewergrey, anchor=west}]
+  \node[L] (df) {\code{DesfireCard}};
+  \node[note, right=3mm of df] {``debit 1.50 from the wallet''};
+  \node[S, below=2.4mm of df] (ac) {\code{ApduChannel}};
+  \node[note, right=3mm of ac] {seam: makes crypto testable};
+  \node[L, below=2.4mm of ac] (idc) {\code{IsoDepChannel}};
+  \node[note, right=3mm of idc] {``wrap this APDU in an I-block''};
+  \node[L, below=2.4mm of idc] (ir) {\code{Iso14443Reader}};
+  \node[note, right=3mm of ir] {``append a CRC, send this frame''};
+  \node[L, below=2.4mm of ir] (rr) {\code{Rc522Reader}};
+  \node[note, right=3mm of rr] {``load the FIFO, press send''};
+  \node[L, below=2.4mm of rr] (rd) {\code{Rc522Driver}};
+  \node[note, right=3mm of rd] {``write register \hex{0x0D} = \hex{0x80}''};
+  \node[S, below=2.4mm of rd] (sl) {\code{SpiLink}};
+  \node[note, right=3mm of sl] {seam: makes the driver testable};
+  \node[L, below=2.4mm of sl] (p4) {\code{Pi4jSpiLink}};
+  \node[note, right=3mm of p4] {``shift these two bytes''};
+  \foreach \a/\b in {df/ac, ac/idc, idc/ir, ir/rr, rr/rd, rd/sl, sl/p4}{
+     \draw[-{Stealth[length=3.5pt]}, brewergrey] (\a) -- (\b);}
+\end{tikzpicture}
+\end{center}
+
+\textbf{Every arrow points down, and there are exactly two seams.} The value of
+that shape: any layer can be tested by faking the layer below, and any layer can
+be replaced without touching the others. Swap \code{Pi4jSpiLink} for an FT232H
+and nothing above changes. Swap the RC522 for a PN532 and you write one new
+\code{Iso14443Reader} subclass; nothing above changes.
+
+\begin{concept}{What ``good architecture'' actually buys}
+It is not a matter of taste. It is the property that lets you \textbf{debug one
+layer at a time instead of debugging six at once.}
+
+When something breaks in Part~IV, you will walk down this diagram asking each
+layer ``are you still telling the truth?'' --- and the first \emph{no} is your
+bug. Without the seams, every failure is a whole-system failure.
+\end{concept}
+
+\section{Verify --- your first conversation with a DESFire}
+
+\begin{jcode}
+IsoDepChannel channel = new IsoDepChannel(reader);
+// ISO-7816-wrapped DESFire GetVersion: 90 60 00 00 00
+byte[] getVersion = { (byte) 0x90, 0x60, 0x00, 0x00, 0x00 };
+byte[] resp = channel.transceive(getVersion);
+System.out.println("GetVersion resp = " + hex(resp));
+\end{jcode}
+
+\begin{verifybox}
+\begin{trace}
+GetVersion resp = 04 01 01 33 00 18 05 91 AF
+\end{trace}
+\end{verifybox}
+
+Decode it --- this is your card's identity document:
+
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\thead{Byte} & \thead{Value} & \thead{Meaning} \\
+\midrule
+\hex{04}     & vendor       & NXP \\
+\hex{01 01}  & type/subtype & DESFire \\
+\textbf{\hex{33}} & \textbf{version} & \textbf{major 3 = EV3} (\hex{0x12} = EV1, \hex{0x22} = EV2) \\
+\hex{00 18}  & storage      & \hex{0x18} $\rightarrow$ 8\,KB \\
+\hex{05}     & protocol     & ISO-14443-2/3/4 \\
+\hex{91 AF}  & status       & \textbf{additional frame available} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{trap}{\hex{91 AF} is not an error}
+It is the card saying ``I have more to tell you''. \code{GetVersion} chains three
+frames --- hardware info, software info, then UID and batch number. You would
+send \hex{90 AF 00 00 00} twice more to drain them.
+
+That matters practically: if you leave the card mid-chain and send a
+\emph{different} command, some cards abort with an error. Either drain the chain
+or power-cycle the field before the next command. This will bite you in
+Chapter~\ref{ch:auth} if you do not.
+\end{trap}
+
+If the \hex{33} byte reads \hex{0x12} or \hex{0x22} you have an EV1 or EV2. EV2
+works with everything in this book. \textbf{EV1 does not} --- it has no
+\code{AuthenticateEV2First}, and needs the legacy \hex{0x0A}/\hex{0xAA}
+authentication, which is a different algorithm.
+
+\section{Traps}
+
+\begin{traptable}
+Empty reply & Block number out of sync, or RATS never ran. \\
+Works exactly once per power-up & Not toggling the block number. \\
+\hex{91 AE} on a later command & Card was mid-chain from \hex{91 AF}. \\
+\hex{6E 00} / \hex{6D 00} instead of \hex{91 xx} & ISO-7816 error --- check the CLA \hex{90} and the trailing \hex{00}. \\
+Reply is one byte too long & Forgot to strip the PCB. \\
+\end{traptable}
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "M6: ApduChannel seam + IsoDepChannel; GetVersion works on silicon"
+\end{shell}

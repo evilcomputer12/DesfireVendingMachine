@@ -1,0 +1,289 @@
+\chapter{Session keys}
+\label{ch:sesskeys}
+
+\chapterbrief
+  {Derive the two per-transaction AES keys from the nonces exchanged during authentication.}
+  {Private static helpers, and enums instead of boolean flags.}
+  {EV2 key derivation verified against independent vectors.}
+
+\section{The problem: never use the long-term key directly}
+
+Your card holds a permanent AES-128 key. It would be technically possible to
+encrypt every message with it. It would also be a bad idea, for three reasons
+worth understanding:
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[Replay.] If one key encrypts everything forever, a recorded ``debit
+        1.50'' frame stays valid. An attacker records one purchase and replays it
+        --- or replays a \emph{credit}.
+  \item[Traffic analysis.] The same plaintext under the same key gives the same
+        ciphertext every time. An eavesdropper learns which commands are which
+        without breaking anything.
+  \item[Exposure.] Every message under the long-term key is another sample for
+        cryptanalysis. Keys wear out with use.
+\end{description}
+
+So DESFire does what TLS does: use the long-term key \emph{once}, to bootstrap a
+pair of throwaway keys valid only for this tap.
+
+\begin{analogy}{The hotel key card}
+A hotel does not hand guests the master key that opens every door forever. You
+present identification at the desk once --- the long-term secret --- and they
+programme a card that opens \emph{your} room, \emph{this} week. Lose it and the
+damage is bounded; the master key never left the safe.
+
+The nonces are what make each session unique. Both sides contribute randomness,
+so neither can force a repeat --- which matters, because if the card alone chose,
+a compromised card could replay the same session forever.
+\end{analogy}
+
+\textbf{Two keys, not one}, because encryption and authentication are different
+jobs and reusing one key for both is a classic footgun:
+
+\begin{itemize}
+  \item $K_{enc}$ --- encrypts data. \emph{Confidentiality}: nobody can read the balance.
+  \item $K_{mac}$ --- authenticates commands. \emph{Integrity}: nobody can alter the debit.
+\end{itemize}
+
+\section{The derivation}
+
+Both keys come from the same construction with a different label byte. The input
+is a 32-byte ``session vector'' (SV):
+
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize\sffamily, x=4.6mm, y=8mm]
+  \definecolor{c1}{HTML}{DCE6F2}
+  \definecolor{c2}{HTML}{F2E4CC}
+  \definecolor{c3}{HTML}{D8ECE0}
+  \definecolor{c4}{HTML}{EFE0EC}
+  % row of 32 cells
+  \foreach \i in {0,...,31}{ \draw[brewergrey!60] (\i,0) rectangle ++(1,1); }
+  \fill[c1] (0,0) rectangle (2,1);   \node at (1,0.5) {\tiny lbl};
+  \fill[black!5] (2,0) rectangle (6,1); \node at (4,0.5) {\tiny 00 01 00 80};
+  \fill[c2] (6,0) rectangle (8,1);   \node at (7,0.5) {\tiny A$_{0,1}$};
+  \fill[c3] (8,0) rectangle (14,1);  \node at (11,0.5) {\tiny A$_{2..7}\oplus$B$_{0..5}$};
+  \fill[c2] (14,0) rectangle (24,1); \node at (19,0.5) {\tiny rndB$_{6..15}$};
+  \fill[c4] (24,0) rectangle (32,1); \node at (28,0.5) {\tiny rndA$_{8..15}$};
+  \foreach \i in {0,...,31}{ \draw[brewergrey!60] (\i,0) rectangle ++(1,1); }
+  % byte index ruler
+  \foreach \i/\lbl in {0/0, 6/6, 8/8, 14/14, 24/24, 32/32}{
+     \node[color=brewergrey, font=\tiny] at (\i,-0.35) {\lbl};
+     \draw[brewergrey!50] (\i,0) -- (\i,-0.18);
+  }
+  \node[color=brewergrey, font=\tiny, anchor=west] at (0,1.45)
+       {32-byte session vector \quad$\rightarrow$\quad session key $=$ CMAC(authKey, SV)};
+\end{tikzpicture}
+\end{center}
+
+\begin{trace}
+SV[0]      label            0xA5 for Kenc, 0x5A for Kmac
+SV[1]      counter-label    the other one (0x5A when label is 0xA5)
+SV[2..5]   00 01 00 80      fixed
+SV[6..7]   rndA[0..1]
+SV[8..13]  rndA[2..7] XOR rndB[0..5]      <- the interleave
+SV[14..23] rndB[6..15]
+SV[24..31] rndA[8..15]
+
+session key = CMAC(authKey, SV)           32 bytes in, 16 out
+\end{trace}
+
+The CMAC you built in Chapter~\ref{ch:cmac} is doing duty here as a \textbf{key
+derivation function}: it mixes a lot of input down into sixteen bytes in a way
+that cannot be inverted. That is the same property that makes it a good MAC.
+
+\begin{deeper}{Why the strange interleave?}
+Both sides must derive identical keys, so the layout is ultimately just a
+specification both implement. But note \emph{why it is mixed rather than
+concatenated}: bytes from both nonces are XOR'd together, so neither party can
+steer the result by choosing their nonce cleverly.
+
+If the layout were plain \code{rndA || rndB}, a malicious reader could pick
+\code{rndA} to force structure into the derived key. The interleave denies both
+sides that control.
+
+And \hex{0xA5}/\hex{0x5A} are bit-complements of each other, chosen to be
+maximally distinct so the two derivations cannot accidentally collide. The label
+sits at byte 0, so the very first AES block of the CMAC already differs and the
+two computations diverge immediately.
+\end{deeper}
+
+\section{Build it}
+
+\begin{jcode}
+package com.midnightbrewer.hardware.crypto;
+
+import java.util.Arrays;
+
+/**
+ * One authenticated session with a card: the two derived keys, and (from
+ * Chapter 10) the secure-messaging state that goes with them.
+ *
+ * The keys are derived ONCE in the constructor and never change -- the same
+ * invariant discipline as AesCmac. If a DesfireSession exists, its keys are
+ * valid and belong together.
+ */
+public class DesfireSession {
+
+    private final byte[] keyEnc;
+    private final byte[] keyMac;
+
+    /**
+     * Which key we are deriving.
+     *
+     * An ENUM, not a boolean. deriveSessionKey(key, a, b, true) at a call site
+     * tells you nothing -- true what? SessionKeyType.ENC is self-documenting,
+     * the compiler rejects anything else, and adding a third key type later
+     * does not change any existing signature.
+     */
+    private enum SessionKeyType { ENC, MAC }
+
+    public DesfireSession(byte[] authKey, byte[] rndA, byte[] rndB) {
+        if (authKey.length != 16) {
+            throw new IllegalArgumentException("auth key must be 16 bytes");
+        }
+        this.keyEnc = deriveSessionKey(authKey, rndA, rndB, SessionKeyType.ENC);
+        this.keyMac = deriveSessionKey(authKey, rndA, rndB, SessionKeyType.MAC);
+    }
+
+    // =================================================================
+    // private static: it is a pure function (same inputs -> same output,
+    // touches no instance state), so it does not need 'this'. Marking it
+    // static says exactly that, and lets the constructor call it before the
+    // object is finished being built.
+    // =================================================================
+    private static byte[] deriveSessionKey(byte[] authKey, byte[] rndA,
+                                           byte[] rndB, SessionKeyType type) {
+        if (rndA.length != 16 || rndB.length != 16) {
+            throw new IllegalArgumentException("nonces must be 16 bytes");
+        }
+        byte[] sv = new byte[32];
+
+        // TODO 1: sv[0] = 0xA5 for ENC, 0x5A for MAC.
+        //         sv[1] = the opposite one.
+        // TODO 2: sv[2..5] = 0x00, 0x01, 0x00, 0x80
+        // TODO 3: sv[6] = rndA[0];  sv[7] = rndA[1];
+        // TODO 4: sv[8..13] = rndA[2..7] XOR rndB[0..5]
+        //         (Arrays.copyOfRange + Aes.xor is the tidy way)
+        // TODO 5: sv[14..23] = rndB[6..15]     (10 bytes)
+        // TODO 6: sv[24..31] = rndA[8..15]     (8 bytes)
+        // TODO 7: return new AesCmac(authKey).compute(sv);
+        return new byte[16];
+    }
+
+    /** Defensive copies -- callers must not be able to scribble on our keys. */
+    public byte[] encKey() { return keyEnc.clone(); }
+
+    public byte[] macKey() { return keyMac.clone(); }
+}
+\end{jcode}
+
+\section{Two design notes worth absorbing}
+
+\subsection{Enum over boolean}
+\index{enum}
+
+Compare these call sites:
+
+\begin{jcode}
+deriveSessionKey(key, rndA, rndB, true);                 // true... what?
+deriveSessionKey(key, rndA, rndB, SessionKeyType.ENC);   // obvious
+\end{jcode}
+
+A boolean parameter is a note-to-self that the reader does not get to see. This
+is sometimes called the \textbf{boolean trap}. Any time you are about to add a
+\code{boolean} parameter that selects \emph{behaviour} rather than expressing
+\emph{a yes/no fact}, an enum is better: self-documenting at the call site,
+extensible without changing signatures, and impossible to pass the wrong way
+round.
+
+\subsection{Do not keep scratch work as state}
+
+A tempting first draft stores the SV and the derived key as fields:
+
+\begin{jcode}
+private byte[] SV;      // don't
+private byte[] SK;      // don't
+\end{jcode}
+
+Now the object has fields that are only meaningful \emph{during} construction.
+Anyone reading the class must work out whether they are still valid later, and a
+second call to a derive method would silently clobber them.
+
+\begin{concept}{Fields versus locals}
+\textbf{Scratch work belongs in local variables. Fields are for state the object
+genuinely \emph{has}.}
+
+\code{keyEnc} and \code{keyMac} are state. \code{sv} is a temporary. The test:
+\emph{``if someone asked this object about this field a minute from now, would
+the answer be meaningful?''} If not, it is a local.
+\end{concept}
+
+\section{Verify}
+
+These vectors were generated independently with Python's \code{cryptography}
+library, so agreement means your Java is \emph{right} --- not merely
+self-consistent.
+
+\begin{trace}
+authKey = 00112233445566778899aabbccddeeff
+rndA    = a0a1a2a3a4a5a6a7a8a9aaabacadaeaf
+rndB    = b0b1b2b3b4b5b6b7b8b9babbbcbdbebf
+
+-> Kenc  = d46c03528ecd3b1f1148e708d3e9729d
+-> Kmac  = 116d156cc502da820eb57915f189ec74
+\end{trace}
+
+\begin{jcode}
+package com.midnightbrewer.hardware.crypto;
+
+import org.junit.jupiter.api.Test;
+import java.util.HexFormat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class DesfireSessionTest {
+
+    @Test
+    void derivesBothSessionKeys() {
+        byte[] authKey = HexFormat.of()
+                .parseHex("00112233445566778899aabbccddeeff");
+        byte[] rndA = HexFormat.of()
+                .parseHex("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf");
+        byte[] rndB = HexFormat.of()
+                .parseHex("b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
+
+        DesfireSession session = new DesfireSession(authKey, rndA, rndB);
+
+        assertEquals("d46c03528ecd3b1f1148e708d3e9729d",
+                HexFormat.of().formatHex(session.encKey()));
+        assertEquals("116d156cc502da820eb57915f189ec74",
+                HexFormat.of().formatHex(session.macKey()));
+    }
+}
+\end{jcode}
+
+\begin{verifybox}
+\begin{shell}
+mvn test -Dtest=DesfireSessionTest
+\end{shell}
+\textbf{If only one key is wrong}, your \code{sv[0]}/\code{sv[1]} labels are
+swapped. \textbf{If both are wrong}, the SV layout is off --- print your \code{sv}
+as hex and compare byte-by-byte against the diagram. The first eight bytes should
+read \hex{a5 5a 00 01 00 80 a0 a1}, and eyeballing those finds most mistakes in
+seconds.
+\end{verifybox}
+
+\section{Traps}
+
+\begin{traptable}
+Both keys wrong & SV layout. Print it and compare against the spec. \\
+Keys swapped & Label bytes \hex{0xA5}/\hex{0x5A} reversed. \\
+\code{ArrayIndexOutOfBounds} in the XOR & Slice lengths: \code{rndA[2..7]} is 6 bytes, \code{rndB[6..15]} is 10, \code{rndA[8..15]} is 8. \\
+Works in the test, fails on the card & You passed \code{rndB} where \code{rndA} belongs. The order matters. \\
+\end{traptable}
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "M7b: EV2 session key derivation, verified against independent vectors"
+\end{shell}

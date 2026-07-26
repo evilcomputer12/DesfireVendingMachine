@@ -1,0 +1,348 @@
+\chapter{YouTube build plan}
+\label{app:video}
+
+A production plan for filming this build: series structure, per-episode scripts,
+shot list, and the pre-flight checklist that stops a stream dying on air.
+
+\section{The pitch}
+
+\begin{quote}\itshape
+``I built a coffee machine that takes contactless payments --- and I wrote every
+byte myself, from the SPI bus up. No libraries. Here is how the cryptography in
+your bank card actually works.''
+\end{quote}
+
+\textbf{Why this works as content:} almost every NFC tutorial online is
+\code{import nfc; print(tag.uid)}. Nobody shows the anticollision tree walk, the
+mutual authentication, or the reason a debit and a commit are separate commands.
+You have a genuinely rare artefact: a from-scratch payment stack that
+\emph{works}, with a physical payoff at the end.
+
+\textbf{The hook is the money.} Not ``let us learn OOP'' --- it is \emph{``this
+card has \texteuro5 on it, and by the end of this video my code will take
+\texteuro1.50 off it.''} Every episode should end with something visibly working.
+
+\section{Series structure}
+
+Two formats, and you should decide up front which you are making.
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.18\linewidth}L{0.36\linewidth}L{0.36\linewidth}@{}}
+\toprule
+ & \thead{Edited series} & \thead{Livestream} \\
+\midrule
+Length   & 10--25 min per episode & 90--120 min \\
+Audience & Discovery, evergreen   & Existing community \\
+Prep     & High (script, retakes) & Low --- but rehearse \\
+Best for & Episodes 1, 6, 7       & The grind chapters \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Recommendation: livestream the build, then cut a highlights series from
+the footage.} You get both, and the edited version benefits from having already
+explained everything once.
+
+\subsection{Episode map}
+
+\begin{center}\small
+\begin{tabular}{@{}cL{0.34\linewidth}L{0.14\linewidth}L{0.24\linewidth}c@{}}
+\toprule
+\thead{Ep} & \thead{Title} & \thead{Chapters} & \thead{Payoff on screen} & \thead{Len} \\
+\midrule
+1  & Talking to an NFC chip with zero libraries & 1--3  & \code{version() = 0x92} & 18 \\
+2  & Waking up a contactless card              & 4     & \code{15/15 polls} & 15 \\
+3  & Reading a UID --- the anticollision dance  & 5--6  & UID on screen & 20 \\
+4  & First words with a DESFire                & 7     & \hex{...91AF} & 12 \\
+5  & Writing AES-CMAC from the RFC             & 8     & 4 vectors green & 22 \\
+6  & \textbf{Proving I know a secret without sending it} & 9--10 & \code{MUTUAL AUTH OK} & 25 \\
+7  & \textbf{Taking money off a real card}     & 11    & \code{5.10 -> 5.00} & 20 \\
+8  & Building the kiosk                        & 12, 14 & Tap $\rightarrow$ brew & 18 \\
+9  & The phone that tops it up                 & 13    & Balance goes up & 15 \\
+10 & What I would do differently               & ---   & Retrospective & 12 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Episodes 6 and 7 will carry the series. Put the most effort into episode 6:
+mutual authentication is genuinely beautiful and almost nobody explains it well
+on video.
+
+\section{Episode scripts}
+
+\subsection{The structure for every episode}
+
+\begin{center}\small
+\begin{tabular}{@{}lL{0.62\linewidth}@{}}
+\toprule
+\thead{Time} & \thead{Beat} \\
+\midrule
+0:00  & \textbf{COLD OPEN} --- the payoff, out of order. 15 seconds, no talking head. \\
+0:15  & \textbf{PROBLEM} --- what does not work yet, concretely \\
+1:30  & \textbf{THEORY} --- the idea $+$ the analogy (whiteboard or slide) \\
+4:00  & \textbf{BUILD} --- live coding, the hard part \\
+12:00 & \textbf{IT FAILS} --- keep this. Always keep this. \\
+14:00 & \textbf{FIX} --- the diagnosis, out loud \\
+16:00 & \textbf{PAYOFF} --- it works, on hardware \\
+17:00 & \textbf{NEXT} --- one sentence teasing the next episode \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{concept}{Keep the failures}
+The single most important production note in this appendix. \textbf{The
+debugging \emph{is} the content} --- it is what separates you from a tutorial
+that hides the mess.
+
+When your MAC fails and you reason your way to ``the counter increments before
+the response'', that is the most valuable ninety seconds in the episode. Nobody
+learns from watching code work the first time, and nobody believes it either.
+\end{concept}
+
+\subsection{Episode 1 --- Talking to an NFC chip with zero libraries}
+
+\textbf{Cold open:} close-up of the card touching the reader, kiosk screen shows
+\texteuro5.10 $\rightarrow$ \texteuro5.00. Cut to black. \emph{``By the end of
+this series, every byte of that transaction will be code I wrote. Today: making
+the chip say hello.''}
+
+\begin{enumerate}
+  \item Show the RC522. \pounds3. Show the datasheet --- the register map page.
+        \emph{``This is all the documentation there is, and it is enough.''}
+  \item Wire it up on camera. \textbf{Say the 3.3\,V warning out loud} --- it is
+        the one mistake that costs a viewer their module.
+  \item The problem: \emph{``I could plug this in and print things until it
+        works. Two minutes per attempt, and when it fails I will not know if it
+        is my code, my wiring, or the chip.''}
+  \item \textbf{Analogy: the wall socket.} Draw it.
+  \item Build \code{SpiLink}, \code{SpiException}, \code{FakeSpiLink}. Run the
+        fake test green --- \textbf{with no hardware plugged in.} Hold up the
+        unplugged cable to camera. That visual sells the whole idea.
+  \item Build \code{Rc522Driver}. Explain the address encoding on screen, one bit
+        at a time.
+  \item \textbf{Deliberate failure:} run it and get $-110$. \emph{``That is the
+        signed byte thing. Java has no unsigned types.''} Fix with \code{\& 0xFF}.
+  \item \textbf{Payoff:} on the Pi. \code{version() = 0x92}.
+\end{enumerate}
+
+\textbf{Line to land:} \emph{``That \hex{0x92} means the chip is alive and I am
+speaking its language. Nothing between my code and the silicon but two bytes of
+SPI.''}
+
+\subsection{Episode 5 --- Writing AES-CMAC from the RFC}
+
+The episode that proves the series is serious.
+
+\textbf{Cold open:} scroll RFC 4493 on screen. \emph{``I am going to implement
+this. Not import it --- implement it. And then prove it is correct.''}
+
+\begin{enumerate}
+  \item What a MAC is. \textbf{Analogy: the wax seal.} Emphasise: it
+        authenticates, it does not hide. Different jobs.
+  \item Why CMAC exists --- the last-block problem with naive CBC-MAC, in one
+        sentence.
+  \item Subkey generation on the whiteboard.
+  \item Code \code{leftShift} live. \textbf{Get the carry direction wrong} ---
+        deliberately, or genuinely, it is a common slip. All four vectors fail
+        with plausible-looking garbage.
+  \item \emph{``And this is why we do not test crypto on hardware. Look at that
+        output --- it is sixteen bytes of noise. Correct output is also sixteen
+        bytes of noise. I cannot tell them apart by looking.''}
+        \textbf{This is the thesis of the whole series.} Deliver it slowly.
+  \item Fix: walk backwards, carry propagates up.
+  \item \textbf{Payoff:} four RFC vectors, green.
+\end{enumerate}
+
+\textbf{Line to land:} \emph{``Those four numbers were published in 2006 by
+people who have never seen my code. My code reproduces them exactly. That is not
+`it seems to work' --- that is proof.''}
+
+\subsection{Episode 6 --- Proving I know a secret without sending it}
+
+The best episode. Take your time.
+
+\textbf{Cold open:} \emph{``This card and my Pi both know a sixteen-byte number.
+In the next twenty minutes they are going to prove it to each other --- and if
+you record every bit of radio between them, you learn nothing.''}
+
+\begin{enumerate}
+  \item Set up the problem properly. \emph{``I cannot send the key. I cannot send
+        a hash --- you would replay it. So how?''}
+  \item \textbf{Analogy: two spies.} Emphasise it must be \textbf{mutual} ---
+        one-way lets an impostor collect the passphrase.
+  \item Draw the full dance on the whiteboard. This is the money shot of the
+        series; animate it in post if you can.
+  \item The testability problem: \emph{``This function calls a random number
+        generator. So it does something different every time. How do I write a
+        known-answer test for that?''} Pause --- let the viewer feel it.
+  \item \textbf{Reveal \code{RandomSource}.} \emph{``Randomness is a dependency
+        like any other. Inject it, and I can pin it.''}
+  \item Show the test class implementing \emph{both} seams. \emph{``My test is
+        the fake card AND the fake dice.''}
+  \item \textbf{Payoff, in two stages} --- the ordering matters:
+        offline vectors green (\emph{``provably correct with no card in the
+        room''}), then the real card: \code{MUTUAL AUTH OK. TI = 8071F582}.
+  \item \textbf{Run it twice.} Different TI each time. \emph{``That is not a
+        replay of my test data. That is a live handshake with a real chip.''}
+        Best twenty seconds in the series.
+\end{enumerate}
+
+\subsection{Episode 7 --- Taking money off a real card}
+
+\textbf{Cold open:} the balance dropping. Full screen.
+
+\begin{enumerate}
+  \item Three requirements: authenticity, freshness, confidentiality.
+        \textbf{Analogy: the cheque} --- amount, signature, cheque number.
+  \item The counter, and the ordering rule. Say it three times, three ways. It is
+        the bug everyone hits.
+  \item Build \code{getValue}. \textbf{Deliberately forget the TI one-liner.}
+        Auth succeeds, \code{getValue} fails its MAC. Debug on camera --- a great
+        sequence, because the failure is one command away from its cause.
+  \item \textbf{The debit/commit split.} Stop and explain properly: \emph{``Debit
+        does not move the money. If the card leaves the field before the commit,
+        nothing happened. That is not a limitation --- that is the entire safety
+        design.''} Then \textbf{physically yank the card mid-transaction} and
+        show the balance unchanged. Best demo in the series.
+  \item \textbf{Payoff:} \code{510 -> 500 cents}, then tap the phone app and show
+        the balance really is 5.00 on an independent device.
+\end{enumerate}
+
+\textbf{Line to land:} \emph{``Every layer of that --- the register writes, the
+anticollision, the CMAC, the session keys, the handshake, the secure messaging
+--- I wrote. It took me [N] weeks and it moves real money.''}
+
+\section{Shot list}
+
+\textbf{Cameras.}
+\begin{itemize}
+  \item \textbf{A} --- screen capture, 1080p60 (OBS; editor plus a terminal).
+  \item \textbf{B} --- overhead on the bench: hands, reader, card. A phone on a
+        gooseneck is fine.
+  \item \textbf{C} \emph{(optional)} --- talking head for intros and outros.
+\end{itemize}
+
+\textbf{Recurring shots you will need repeatedly:}
+\begin{itemize}
+  \item Card approaching the reader, slow, close. \emph{Get ten takes of this
+        early} --- you will reuse it constantly.
+  \item Terminal output scrolling to a success line.
+  \item Whiteboard or tablet diagrams.
+  \item Insert of the datasheet register table.
+  \item The kiosk screen, straight on, no glare.
+\end{itemize}
+
+\textbf{Audio} matters more than video. A lavalier or a USB condenser. Viewers
+forgive 720p; they leave over hiss.
+
+\textbf{Screen legibility:} editor at \textbf{16--18\,pt minimum}, high-contrast
+theme, and \textbf{zoom in on the specific lines you are discussing} in post.
+Nobody can read your normal font size on a phone.
+
+\section{Livestream pre-flight}
+
+Print this. Run it before every stream.
+
+\textbf{Hardware, 30 minutes before:}
+\begin{itemize}[label=$\square$]
+  \item Pi booted, on the network, IP noted (\textbf{static lease} --- DHCP will
+        move it mid-stream)
+  \item \code{ssh} session open and tested
+  \item RC522 responds: \code{version() = 0x92}
+  \item Test card has a \textbf{known balance} --- set it deliberately with the
+        phone app
+  \item \textbf{A second card, provisioned identically}, in a drawer
+  \item Reader taped down. It \emph{will} get nudged on camera.
+\end{itemize}
+
+\textbf{Software:}
+\begin{itemize}[label=$\square$]
+  \item \code{mvn clean compile} passes
+  \item \code{mvn test} all green
+  \item Vectors file open in a tab --- you \emph{will} be asked to show them
+  \item Git committed to a known-good point; \code{git stash} any half-finished work
+\end{itemize}
+
+\textbf{The safety net --- the most important item here:}
+\begin{itemize}[label=$\square$]
+  \item A branch with the chapter \textbf{already working}, ready to
+        \code{git checkout} if you get stuck live
+\end{itemize}
+
+\begin{concept}{The ten-minute rule}
+That safety net is not cheating. Streaming with no escape hatch is how you spend
+forty minutes on a typo in front of an audience.
+
+Give yourself a hard rule: \textbf{stuck for ten minutes on air $\rightarrow$
+check out the working branch, walk through it, and move on.} Debug it off-stream
+and cover the fix at the start of the next episode. Your audience will respect
+the discipline more than the struggle.
+\end{concept}
+
+\textbf{Stream ergonomics:}
+\begin{itemize}[label=$\square$]
+  \item Notifications off, phone silent, second monitor off-camera for chat
+  \item Water within reach
+  \item Say what you are about to do \emph{before} doing it --- silent typing is
+        dead air
+\end{itemize}
+
+\section{The honest bits --- say these on camera}
+
+Credibility comes from what you are willing to admit.
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[1. The keys are hardcoded and that is not secure.] Say it plainly:
+        \emph{``Every card in my fleet has the same key, and that key is in the
+        APK in plaintext. Anyone who pulls the APK can mint unlimited balance. For
+        a bench project with test cards that is fine --- I am telling you so
+        nobody copies this into something real.''} Then explain diversification
+        and HSMs briefly. Half your technical audience already knows; the ones who
+        do not will learn the most important thing in the series.
+  \item[2. Cards can be destroyed.] Warn viewers before the provisioning episode.
+        Somebody \emph{will} run it against their office badge.
+  \item[3. What you would change.] Episode 10: the FSCI nibble bug that cost you
+        an evening, the three-second dead time from a bad wait loop, choosing
+        wall-clock deadlines over iteration counts. A retrospective on your own
+        mistakes is unusually good content --- and it proves you understand the
+        thing rather than having merely typed it.
+\end{description}
+
+\section{Titles and thumbnails}
+
+\textbf{Titles that work:}
+\begin{itemize}
+  \item \emph{I wrote a contactless payment system from scratch (no libraries)}
+  \item \emph{How your bank card proves it knows a secret --- without sending it}
+  \item \emph{Taking real money off an NFC card with code I wrote myself}
+\end{itemize}
+
+\textbf{Titles that do not:} anything starting with ``Learning'', ``Tutorial'',
+or ``Part 3''. Lead with the artefact.
+
+\textbf{Thumbnails:} the card mid-tap with the balance visible, or a hex dump
+with one line circled. Avoid a face plus arrow if you want the technical
+audience --- they read it as low-signal.
+
+\textbf{Description boilerplate:} link this book, the repository, the RFC, and
+the NXP datasheet. Timestamp the chapters. Pin a comment with the bill of
+materials.
+
+\section{Realistic schedule}
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.52\linewidth}L{0.32\linewidth}@{}}
+\toprule
+\thead{Phase} & \thead{Effort} \\
+\midrule
+Rebuild solo from this book (no camera) & 3--5 evenings \\
+Rehearse each episode's build once      & 1 evening each \\
+Record                                  & 1 session each \\
+Edit (for the edited series)            & 3--4 h per finished episode \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Do the full rebuild before filming anything.} Not because you will forget
+--- because the second time through you will know exactly where the interesting
+explanations live, and you will have already hit the bugs you want to keep in.

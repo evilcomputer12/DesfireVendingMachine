@@ -1,0 +1,179 @@
+\chapter*{Preface}
+\addcontentsline{toc}{chapter}{Preface}
+\markboth{\textsc{Preface}}{}
+
+There is a moment, somewhere around the middle of this book, when a small
+plastic card and a three-pound circuit board prove to each other that they both
+know the same sixteen-byte number --- without either of them ever transmitting
+it, and while anyone within a few centimetres could be recording every bit that
+passes between them.
+
+That moment is the reason this book exists. It is the same handshake that
+happens when you tap your bank card, open your office door, or board a train.
+It is not magic and it is not beyond you. It is about two hundred lines of code,
+and by the end of Chapter~\ref{ch:auth} you will have written all of them.
+
+\section*{What you will build}
+
+A coffee kiosk that takes contactless payments. Touch a drink on a
+touchscreen, hold a card to the reader, and:
+
+\begin{enumerate}
+  \item the reader wakes the card out of the radio field and reads its serial number;
+  \item your code and the card authenticate each other with AES-128;
+  \item your code reads the balance --- encrypted, and authenticated, so a
+        forged reply is rejected rather than believed;
+  \item it debits the price, commits the transaction, and the drink is dispensed.
+\end{enumerate}
+
+Plus a phone app that puts credit back on.
+
+Every layer is yours. No NFC library, no crypto library beyond a raw AES block
+cipher, no copied driver. You will write the SPI register encoding, the
+anticollision tree walk, the ISO-DEP block framing, AES-CMAC from the RFC, the
+session key derivation, the mutual authentication, and the secure messaging that
+carries the money.
+
+\section*{Who this is for}
+
+You know C. You have blinked an LED, read a datasheet, and written
+\code{uint8\_t buf[16]}. You have probably not written much Java, and you may
+never have seen an interface, an abstract class, or a line of cryptography.
+
+That is exactly the intended reader. This book teaches object-oriented design
+and applied cryptography \emph{as tools for a job you are actually doing}, in the
+order the job demands them.
+
+\begin{concept}{No concept before the problem that needs it}
+You will not read ``an interface is a contract between a class and its
+callers'' as an abstract definition. You will hit a concrete wall --- \emph{I
+cannot test my driver without a Raspberry Pi physically plugged in} --- and the
+interface will be the tool that gets you over it.
+
+Concepts learned that way stick, because they are attached to a memory of being
+stuck. Concepts learned as definitions evaporate before the exam.
+\end{concept}
+
+Each chapter names the one design idea it introduces:
+
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\thead{Chapter} & \thead{Idea, and the problem that forces it} \\
+\midrule
+1  & Interfaces --- testing a driver with no hardware \\
+2  & Encapsulation --- forty copies of a bit-twiddle \\
+3  & Abstract classes --- one protocol, many reader chips \\
+4  & Polymorphism --- three frame types, one call site \\
+5  & Value objects --- three results that belong together \\
+6  & Layering --- a seam that makes crypto testable \\
+7  & Immutability --- an object that cannot be half-built \\
+8  & Enums over booleans --- \code{derive(key, a, b, true)} means nothing \\
+9  & Injecting randomness --- testing a function that is random \\
+10 & Growing a class --- state and its operations belong together \\
+11 & The Adapter pattern --- two fixed interfaces, made to fit \\
+12 & Porting a design --- discovering what was incidental \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section*{How to use this book}
+\label{sec:howtouse}
+
+\textbf{Read the chapter, close the book, write the code.} Every chapter gives
+you five things:
+
+\begin{enumerate}
+  \item \textbf{The problem.} What does not work yet, concretely.
+  \item \textbf{The idea.} The design, with an analogy from outside programming.
+  \item \textbf{The boilerplate.} A skeleton with \code{TODO} comments.
+  \item \textbf{The verification gate.} A test with known-good values.
+        \emph{Do not continue until it passes.}
+  \item \textbf{The traps.} The specific bugs that will bite, with their symptoms.
+\end{enumerate}
+
+\subsection*{Why the listings have holes in them}
+
+Because reading code teaches you very little and writing it teaches you almost
+everything.
+
+The skeletons hand you the parts that are pure lookup --- register addresses,
+class declarations, import lists, byte layouts --- and withhold the parts that
+are actual reasoning: the algorithm, the control flow, the order of operations.
+You spend your thinking where thinking pays.
+
+If you get genuinely stuck, a complete implementation of every file exists in
+the companion repository. Treat it as the back of a textbook: consulting it ends
+the exercise, so spend twenty minutes stuck first. \emph{Being stuck is the
+learning.} The answer merely ends it.
+
+\subsection*{The verification gate, and why it is not optional}
+
+Cryptographic code has a property that no code you have written before has:
+\textbf{wrong output is indistinguishable from right output.}
+
+A broken checksum gives you a visible mismatch. A broken CMAC gives you sixteen
+bytes of perfect-looking randomness --- exactly like a correct CMAC. You cannot
+eyeball it. You cannot infer it from a failed transaction. And if you build three
+more layers before testing, you will have no way to know which one is lying.
+
+On real hardware it is worse: a card may count consecutive authentication
+failures and, after enough of them, lock a key permanently.
+
+So every chapter in Part~IV ends with \textbf{known-answer test vectors} ---
+inputs with independently computed correct outputs. Reproduce them and your code
+is right. Fail them and it is wrong, and you fix it \emph{now}.
+
+The vectors in this book were generated with Python's \code{cryptography}
+library, deliberately \emph{not} with the Java you are writing. Otherwise they
+would only prove your code agrees with itself.
+
+\section*{What you need}
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.34\linewidth}L{0.46\linewidth}r@{}}
+\toprule
+\thead{Item} & \thead{Notes} & \thead{Approx.} \\
+\midrule
+Raspberry Pi Zero 2 W & Any Pi works; the Zero 2 W is the tight fit that teaches you to optimise & \pounds18 \\
+MFRC522 reader module & The ubiquitous breakout board & \pounds3 \\
+\textbf{MIFARE DESFire EV2/EV3} & \textbf{Not Classic, not NTAG. See below.} & \pounds3 ea \\
+7-inch touchscreen \emph{(optional)} & 1024$\times$600, HDMI + USB touch & \pounds45 \\
+Jumper wires, microSD, 5\,V PSU & & \\
+An Android phone with NFC & For Part~VI & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{trap}{The card matters more than anything else on that list}
+It must say \textbf{DESFire EV2} or \textbf{EV3}. Not MIFARE Classic (broken
+crypto, entirely different protocol), not NTAG or Ultralight (no crypto at all,
+no value files), not ``13.56\,MHz RFID tag'' from a bag of a hundred.
+
+If a listing says ``compatible'' or does not name the chip, it is not one.
+\textbf{Buy at least two} --- one to develop against and one spare, because it
+is genuinely possible to destroy a card by changing a key and forgetting it.
+
+You can confirm what you have in Chapter~\ref{ch:apdu}: a real DESFire answers
+\code{GetVersion} with a hardware type byte of \hex{0x33} for EV3.
+\end{trap}
+
+\section*{Conventions}
+
+\begin{itemize}
+  \item Java 21 and Maven, package \code{com.midnightbrewer}. Keeping the same
+        package as the reference repository means you can diff against it.
+  \item Hexadecimal is lowercase and unspaced in code, spaced in prose:
+        \hex{91 00}.
+  \item Coloured rules in the margin mark the four kinds of aside:
+        \textcolor{brewerblue}{concepts}, \textcolor{breweramber}{analogies},
+        \textcolor{brewerred}{traps}, and \textcolor{brewergreen}{verification
+        gates}.
+  \item Every chapter ends with a suggested commit message, so your history
+        becomes a record of the build.
+\end{itemize}
+
+\vspace{1em}
+\begin{flushright}
+\itshape One layer at a time.
+\end{flushright}

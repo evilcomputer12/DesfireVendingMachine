@@ -1,0 +1,408 @@
+\chapter{The SPI seam}
+\label{ch:spi}
+
+\chapterbrief
+  {Define what ``an SPI bus'' means to your program, build a fake one, and test against it with no hardware attached.}
+  {Interfaces, and dependency injection.}
+  {A green test that runs with the reader unplugged.}
+
+\section{The problem}
+
+You are about to write a driver that pokes RC522 registers. Before you write a
+line of it, ask an uncomfortable question:
+
+\begin{quote}\itshape How will I know the driver is correct?\end{quote}
+
+The obvious answer --- \emph{plug in the Pi and see} --- will cost you the
+project. Consider the loop it commits you to:
+
+\begin{center}
+\begin{tikzpicture}[node distance=5mm, font=\footnotesize\sffamily,
+   b/.style={draw=brewergrey, rounded corners=2pt, inner sep=4pt, minimum height=7mm}]
+  \node[b] (e) {edit on laptop};
+  \node[b, right=of e] (c) {copy to Pi};
+  \node[b, right=of c] (m) {compile (slow)};
+  \node[b, right=of m] (r) {run};
+  \node[b, right=of r] (g) {squint, guess};
+  \foreach \x/\y in {e/c, c/m, m/r, r/g}{
+    \draw[-{Stealth[length=4pt]}, brewergrey] (\x) -- (\y);}
+  \draw[-{Stealth[length=4pt]}, brewergrey] (g.south) -- ++(0,-4.5mm) -| (e.south);
+  \node[font=\scriptsize\itshape, color=brewerred] at ($(m)!0.5!(r)+(0,-9mm)$)
+       {two minutes per attempt};
+\end{tikzpicture}
+\end{center}
+
+And every failure has three possible causes --- your logic, your wiring, the
+chip --- with no way to tell them apart. You want a loop that takes 200
+milliseconds and has exactly \emph{one} possible cause: your logic.
+
+\section{The idea: program against a description, not a thing}
+
+Your driver does not actually need ``a Raspberry Pi SPI bus''. Look at what it
+truly needs: \emph{something that takes bytes out and hands bytes back}. That is
+the entire requirement. A real Pi satisfies it. So does a lookup table you write
+in ten lines.
+
+So rather than have the driver depend on a concrete Pi4J class, write that
+\emph{requirement} down as a type of its own --- an \textbf{interface}
+\index{interface} --- and have the driver depend on the requirement.
+
+\begin{analogy}{The wall socket}
+A wall socket is an interface. Your kettle does not depend on ``the Hinkley
+Point C nuclear reactor''; it depends on ``230\,V at 50\,Hz through two holes
+shaped like this''. That is why the same kettle works on a generator, a solar
+inverter, or a test rig in the factory.
+
+The socket standard is a \emph{contract}: it says nothing about how the
+electricity was made, only what shows up at the holes. Every appliance ever
+built works with every power source ever built, because both sides code against
+the socket rather than against each other.
+
+An interface is a socket. \code{SpiLink} is the socket shape, \code{Pi4jSpiLink}
+is the power station, and \code{FakeSpiLink} is the bench supply you use to test
+the kettle without burning coal.
+\end{analogy}
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,
+   b/.style={draw=brewernavy, rounded corners=2pt, inner sep=5pt, minimum width=28mm, minimum height=8mm},
+   i/.style={draw=brewerblue, fill=brewerblue!8, rounded corners=2pt, inner sep=5pt, minimum width=28mm, minimum height=8mm}]
+  \node[b] (drv) {\code{Rc522Driver}};
+  \node[i, below=9mm of drv] (if) {\code{SpiLink}};
+  \node[b, below left=12mm and 2mm of if] (fake) {\code{FakeSpiLink}};
+  \node[b, below right=12mm and 2mm of if] (real) {\code{Pi4jSpiLink}};
+  \draw[-{Stealth[length=4pt]}, brewernavy] (drv) --
+        node[right, font=\scriptsize\itshape, color=brewergrey] {depends on} (if);
+  \draw[-{Stealth[length=4pt]}, dashed, brewergrey] (fake) -- (if);
+  \draw[-{Stealth[length=4pt]}, dashed, brewergrey] (real) -- (if);
+  \node[font=\scriptsize\itshape, color=brewergrey, below=1mm of fake] {tests};
+  \node[font=\scriptsize\itshape, color=brewergrey, below=1mm of real] {the kiosk};
+\end{tikzpicture}
+\end{center}
+
+In C you would get halfway there with a struct of function pointers, and the
+idea is genuinely the same. Java's version is checked by the compiler: a class
+that claims to satisfy the contract but forgets a method does not compile.
+
+\section{Build it}
+
+\subsection{\texttt{SpiException} --- the failure channel}
+
+SPI can fail: the device file may not exist, a transfer can error. In C you
+would return $-1$ and hope the caller checks.
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+/**
+ * Something went wrong talking to the SPI bus.
+ *
+ * Deliberately a CHECKED exception (extends Exception, not RuntimeException):
+ * the compiler forces every caller to either handle it or declare that it
+ * throws too. Hardware failure is not an edge case you get to forget about,
+ * so we make the compiler nag.
+ */
+public class SpiException extends Exception {
+
+    public SpiException(String message) {
+        super(message);
+    }
+
+    public SpiException(String message, Throwable cause) {
+        super(message, cause);   // keeps the original error's stack trace
+    }
+}
+\end{jcode}
+
+\begin{concept}{Checked exceptions are a design statement}
+Java has two flavours of exception. \emph{Unchecked} ones
+(\code{RuntimeException}) can be ignored silently. \emph{Checked} ones must be
+acknowledged --- a caller either catches it or adds \code{throws SpiException} to
+its own signature.
+
+That distinction lets you encode a rule: \emph{the bus can fail, and you may not
+forget that}. The cost is that \code{throws SpiException} propagates up your call
+stack, which is a little noisy. But that noise is an accurate map of everything
+in your program that can fail because hardware exists, and that map turns out to
+be useful.
+\end{concept}
+
+The two-argument constructor matters more than it looks. \code{super(message,
+cause)} preserves the underlying error, so when Pi4J throws some
+\code{IOException} deep inside, you wrap it with your own context while keeping
+the original stack trace. Debug output becomes ``my error, \emph{caused by}
+their error'' rather than one or the other.
+
+\subsection{\texttt{SpiLink} --- the contract}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+/**
+ * The seam between this program and an SPI bus.
+ *
+ * An interface is a PROMISE, not code: any class that says "implements
+ * SpiLink" must supply these methods, and the compiler enforces it.
+ *
+ * Everything above this line -- the driver, the reader, the whole card stack
+ * -- depends only on this promise. Never on Pi4J, never on a device file.
+ *
+ * Extends AutoCloseable so callers can use try-with-resources and the RF
+ * field is never left energised by a crash.
+ */
+public interface SpiLink extends AutoCloseable {
+
+    /**
+     * Full-duplex SPI transfer: shift out txBuffer, shift in rxBuffer.
+     *
+     * SPI is inherently full duplex -- every clock pulse sends a bit AND
+     * receives a bit. So this is ONE method, not a send() and a receive().
+     * The API mirrors the hardware rather than pretending it is a stream.
+     */
+    void transfer(byte[] txBuffer, byte[] rxBuffer, int length) throws SpiException;
+
+    /** Release the bus. Overridden to narrow the exception type. */
+    @Override
+    void close() throws SpiException;
+}
+\end{jcode}
+
+Notice there is \textbf{no code here at all} --- no fields, no bodies. An
+interface is pure vocabulary, which is exactly why it makes a good seam: there
+is nothing in it that could accidentally depend on a Pi.
+
+\begin{deeper}{The signature is a design decision}
+\code{transfer(tx, rx, length)} mirrors SPI's full-duplex reality: one call,
+both directions. Had it been \code{send()} and \code{receive()}, every caller
+would need to know that a ``read'' is really \emph{write the address, then clock
+out a dummy byte to shift the answer in} --- a hardware detail leaking into every
+call site.
+
+Design the interface around what the hardware genuinely \emph{is}, and the code
+above it stays honest. Design it around what feels convenient today, and you
+spend next year translating.
+\end{deeper}
+
+\subsection{\texttt{FakeSpiLink} --- the test double}
+
+This lives in \code{src/test/java/}, so it never ships.
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * A fake SPI bus: answers from a canned table, records what it was sent.
+ *
+ * This is the payoff of the interface. The driver cannot tell this from a real
+ * Pi -- it only ever saw the SpiLink promise, and this keeps that promise.
+ */
+class FakeSpiLink implements SpiLink {
+
+    /** Register address -> value the fake chip should report. */
+    private final Map<Integer, Integer> registers = new HashMap<>();
+
+    /** Every tx buffer we were handed, so a test can assert on it. */
+    final List<byte[]> sent = new ArrayList<>();
+
+    private boolean closed = false;
+
+    void setRegister(int address, int value) { registers.put(address, value); }
+
+    boolean isClosed() { return closed; }
+
+    @Override
+    public void transfer(byte[] txBuffer, byte[] rxBuffer, int length) {
+        sent.add(txBuffer.clone());
+
+        // TODO 1: decode the address byte the driver sent.
+        //   A READ is encoded as ((addr << 1) & 0x7E) | 0x80, so:
+        //     address = (txBuffer[0] & 0x7E) >> 1
+        //     isRead  = (txBuffer[0] & 0x80) != 0
+
+        // TODO 2: if it was a read, put the canned value in rxBuffer[1].
+        //   The answer arrives on the SECOND byte: the first byte out is the
+        //   address, and while that goes out the chip has nothing to say yet.
+        //   Default to 0 for an address nobody configured.
+
+        // TODO 3: if it was a write, there is nothing to answer.
+    }
+
+    @Override
+    public void close() { closed = true; }
+}
+\end{jcode}
+
+\begin{trap}{A fake that returns nothing}
+If you leave \code{transfer()} empty, \code{rxBuffer} stays all zeros, your
+driver dutifully returns \code{0}, and your test asserting \code{version() ==
+0x92} fails --- so you go hunting for a bug in the driver that is not there.
+
+Worse is the opposite: a test that \emph{passes} because both sides are
+trivially empty.
+
+\textbf{A fake must be a plausible liar, not a mute.} It has to behave enough
+like the real thing that the code under test is genuinely exercised.
+\end{trap}
+
+\subsection{The test}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class FakeSpiLinkTest {
+
+    @Test
+    void readReturnsTheCannedValue() throws SpiException {
+        FakeSpiLink link = new FakeSpiLink();
+        link.setRegister(0x37, 0x92);          // VersionReg answers 0x92
+
+        // Hand-encode a READ of register 0x37, exactly as the driver will.
+        byte[] tx = { (byte) (((0x37 << 1) & 0x7E) | 0x80), 0x00 };
+        byte[] rx = new byte[2];
+        link.transfer(tx, rx, 2);
+
+        assertEquals(0x92, rx[1] & 0xFF);      // & 0xFF -- the signed-byte thing
+        assertEquals(1, link.sent.size());
+    }
+
+    @Test
+    void closeIsRecorded() throws Exception {
+        FakeSpiLink link = new FakeSpiLink();
+        assertTrue(!link.isClosed());
+        link.close();
+        assertTrue(link.isClosed());
+    }
+}
+\end{jcode}
+
+\begin{verifybox}
+\begin{shell}
+mvn test -Dtest=FakeSpiLinkTest
+\end{shell}
+Green --- \emph{with the reader unplugged}. Pause on that: you have just tested
+hardware-facing code with no hardware in the room.
+\end{verifybox}
+
+\subsection{\texttt{Pi4jSpiLink} --- the real one}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+import com.pi4j.Pi4J;
+import com.pi4j.context.Context;
+import com.pi4j.io.spi.Spi;
+import com.pi4j.io.spi.SpiMode;
+
+/**
+ * The real SPI bus, via Pi4J and /dev/spidev0.0.
+ *
+ * The ONLY class in the project that knows Pi4J exists. Everything else sees
+ * the SpiLink interface. Contain your dependencies in one place and swapping
+ * them later is a one-file job.
+ */
+public class Pi4jSpiLink implements SpiLink {
+
+    private static final int SPI_CHANNEL = 0;         // CE0
+    private static final int SPI_BAUD    = 1_000_000; // 1 MHz
+
+    private final Context pi4j;
+    private final Spi spi;
+
+    public Pi4jSpiLink() {
+        this.pi4j = Pi4J.newAutoContext();
+        this.spi = pi4j.create(Spi.newConfigBuilder(pi4j)
+                .id("rc522")
+                .address(SPI_CHANNEL)
+                .baud(SPI_BAUD)
+                .mode(SpiMode.MODE_0)   // RC522 is mode 0: CPOL=0, CPHA=0
+                .build());
+    }
+
+    @Override
+    public void transfer(byte[] txBuffer, byte[] rxBuffer, int length)
+            throws SpiException {
+        try {
+            spi.transfer(txBuffer, 0, rxBuffer, 0, length);
+        } catch (RuntimeException e) {
+            throw new SpiException("SPI transfer failed", e);
+        }
+    }
+
+    @Override
+    public void close() throws SpiException {
+        try {
+            spi.close();
+            pi4j.shutdown();
+        } catch (RuntimeException e) {
+            throw new SpiException("failed to close SPI", e);
+        }
+    }
+}
+\end{jcode}
+
+\paragraph{Why 1\,MHz?} The MFRC522 handles 10\,MHz on a clean PCB. On loose
+jumper wires it does not. 1\,MHz is fast enough that SPI is never your bottleneck
+--- the card's RF timing dominates by orders of magnitude --- and slow enough to
+tolerate imperfect wiring. Optimise the thing that is actually slow, not the
+thing that is easy to measure.
+
+\paragraph{Why mode 0?} CPOL${}=0$, CPHA${}=0$, from the datasheet: clock idles
+low, data sampled on the rising edge. Get this wrong and you read
+plausible-looking garbage, which is the worst kind of wrong.
+
+\section{The concept, now that you have used it}
+\index{dependency injection}
+
+\textbf{Dependency injection} is the name for what you just did:
+\code{Rc522Driver} will receive its \code{SpiLink} from outside, through its
+constructor, rather than constructing one itself.
+
+\begin{jcode}
+// If the driver did this, it would be welded to the Pi forever:
+class Rc522Driver {
+    private final SpiLink link = new Pi4jSpiLink();   // untestable
+}
+
+// Handing it in from outside means the CALLER decides:
+class Rc522Driver {
+    private final SpiLink link;
+    Rc522Driver(SpiLink link) { this.link = link; }   // testable
+}
+\end{jcode}
+
+Same code, two power sources. The kettle does not own the power station.
+
+\begin{concept}{A rule worth internalising}
+\textbf{A class should not construct the things it depends on. It should be
+handed them.}
+
+``Who decides?'' moves up to whoever assembles the program, and testability,
+flexibility and clear ownership all follow from that one move. When you meet a
+class that is hard to test, look first for a \code{new} in its constructor.
+\end{concept}
+
+\section{Traps}
+
+\begin{traptable}
+\code{version()} returns $-110$ & Missing \code{\& 0xFF}. \hex{0x92} as a signed byte is $-110$. \\
+Fake test passes, hardware returns 0 & The fake answers unconditionally; make it decode the address. \\
+\code{NoClassDefFoundError: com/sun/jna/...} & JNA missing from the classpath. Run \code{mvn dependency:copy-dependencies}. \\
+Works once, fails on the second run & You did not \code{close()}; the device file stays locked. Use try-with-resources. \\
+\code{Permission denied} on \code{/dev/spidev0.0} & Not in the \code{spi} group. \code{sudo usermod -aG spi,gpio \$USER}. \\
+\end{traptable}
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "M1: SpiLink interface + fake and Pi4J implementations"
+\end{shell}

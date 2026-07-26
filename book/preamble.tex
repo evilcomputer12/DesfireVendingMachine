@@ -1,0 +1,278 @@
+% ============================================================
+%  The Midnight Brewer -- preamble / design system
+%  Compile with: pdflatex (or latexmk -pdf)
+% ============================================================
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+
+% ---- fonts -------------------------------------------------
+\usepackage[mono=false]{libertinus}      % body serif
+\usepackage[scaled=0.92]{FiraSans}       % headings sans
+\usepackage[scaled=0.86]{sourcecodepro}  % code mono
+\usepackage{microtype}
+
+% ---- page geometry -----------------------------------------
+\usepackage[
+  paperwidth=7.5in, paperheight=9.25in,
+  inner=0.95in, outer=0.85in,
+  top=0.95in, bottom=1.0in,
+  headsep=18pt, footskip=28pt
+]{geometry}
+
+\usepackage{graphicx}
+\usepackage{amssymb}      % \square for checklists
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,shapes.geometric,fit,backgrounds,decorations.pathreplacing}
+\usepackage[most]{tcolorbox}
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{makeidx}
+\usepackage{emptypage}
+\usepackage[bottom]{footmisc}
+
+\usepackage[
+  colorlinks=true,
+  linkcolor=brewerlink,
+  urlcolor=brewerlink,
+  citecolor=brewerlink,
+  pdftitle={The Midnight Brewer},
+  pdfsubject={Building a contactless payment terminal from scratch},
+  pdfauthor={Martin},
+  bookmarksnumbered=true
+]{hyperref}
+
+\makeindex
+
+% ---- palette -----------------------------------------------
+\definecolor{brewerink}   {HTML}{16161D}  % near-black body
+\definecolor{brewernavy}  {HTML}{1B2A4A}  % headings
+\definecolor{brewerlink}  {HTML}{1F5C99}
+\definecolor{breweramber} {HTML}{B26B00}  % analogy
+\definecolor{brewerred}   {HTML}{A32C2C}  % traps
+\definecolor{brewergreen} {HTML}{1F6B4A}  % verification
+\definecolor{brewerblue}  {HTML}{27548A}  % concepts
+\definecolor{brewergrey}  {HTML}{5A5F6B}
+\definecolor{rulegrey}    {HTML}{C9CCD2}
+\definecolor{codebg}      {HTML}{F7F7F9}
+\definecolor{codeframe}   {HTML}{DDDFE4}
+\definecolor{kwcolor}     {HTML}{7A3E9D}
+\definecolor{strcolor}    {HTML}{1F6B4A}
+\definecolor{comcolor}    {HTML}{6B7280}
+\definecolor{todocolor}   {HTML}{B26B00}
+
+\color{brewerink}
+
+% ---- headings ----------------------------------------------
+\titleformat{\part}[display]
+  {\normalfont\sffamily\bfseries\color{brewernavy}}
+  {\Large\MakeUppercase{Part \thepart}}{14pt}{\Huge}
+\titleformat{\chapter}[display]
+  {\normalfont\sffamily\bfseries\color{brewernavy}}
+  {\normalsize\sffamily\mdseries\color{brewergrey}\MakeUppercase{Chapter \thechapter}}
+  {8pt}{\LARGE\raggedright}
+  [\vspace{4pt}{\color{rulegrey}\rule{\linewidth}{0.6pt}}]
+\titleformat{\section}
+  {\normalfont\sffamily\bfseries\large\color{brewernavy}}{\thesection}{0.7em}{}
+\titleformat{\subsection}
+  {\normalfont\sffamily\bfseries\normalsize\color{brewernavy}}{\thesubsection}{0.6em}{}
+\titlespacing*{\chapter}{0pt}{6pt}{22pt}
+\titlespacing*{\section}{0pt}{18pt}{6pt}
+\titlespacing*{\subsection}{0pt}{13pt}{4pt}
+
+% ---- running heads -----------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{rulegrey}\leaders\hrule height \headrulewidth\hfill}}
+\fancyhead[LE]{\sffamily\small\color{brewergrey}\leftmark}
+\fancyhead[RO]{\sffamily\small\color{brewergrey}\rightmark}
+\fancyfoot[C]{\sffamily\small\color{brewergrey}\thepage}
+\renewcommand{\chaptermark}[1]{\markboth{\textsc{The Midnight Brewer}}{}}
+\renewcommand{\sectionmark}[1]{\markright{#1}}
+\fancypagestyle{plain}{\fancyhf{}\renewcommand{\headrulewidth}{0pt}%
+  \fancyfoot[C]{\sffamily\small\color{brewergrey}\thepage}}
+
+% ---- code listings -----------------------------------------
+\lstdefinestyle{brewerbase}{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  framesep=6pt,
+  xleftmargin=10pt, xrightmargin=0pt,
+  breaklines=true,
+  breakatwhitespace=false,
+  breakindent=14pt,
+  postbreak=\mbox{\textcolor{brewergrey}{$\hookrightarrow$}\space},
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  tabsize=4,
+  upquote=true,
+  aboveskip=10pt, belowskip=8pt,
+  keywordstyle=\color{kwcolor}\bfseries,
+  commentstyle=\color{comcolor}\itshape,
+  stringstyle=\color{strcolor},
+  numberstyle=\tiny\color{brewergrey},
+  literate=%
+    {á}{{\'a}}1 {é}{{\'e}}1 {í}{{\'i}}1 {ó}{{\'o}}1 {ú}{{\'u}}1
+    {€}{{\texteuro}}1 {—}{{---}}1 {–}{{--}}1 {'}{{'}}1
+    {“}{{``}}1 {”}{{''}}1 {…}{{\ldots}}1 {×}{{$\times$}}1
+    {⚠}{{!}}1 {→}{{$\rightarrow$}}1 {‖}{{$\|$}}1 {≥}{{$\geq$}}1
+}
+
+\lstdefinestyle{java}{style=brewerbase,language=Java,
+  morekeywords={var,record,sealed,permits,yield},
+  moredelim=[il][\color{todocolor}\bfseries]{//!},
+}
+\lstdefinestyle{dart}{style=brewerbase,language=Java,
+  morekeywords={Future,async,await,final,var,late,Uint8List,int,void,class,extends},
+}
+\lstdefinestyle{bash}{style=brewerbase,language=bash,
+  keywordstyle=\color{brewernavy}\bfseries,
+}
+\lstdefinestyle{xml}{style=brewerbase,language=XML,
+  morestring=[b]",
+}
+\lstdefinestyle{plain}{style=brewerbase,
+  keywordstyle=\color{brewerink},
+  basicstyle=\ttfamily\scriptsize,
+}
+
+\lstset{style=java}
+
+% shorthand environments
+\lstnewenvironment{jcode}[1][]{\lstset{style=java,#1}}{}
+\lstnewenvironment{dcode}[1][]{\lstset{style=dart,#1}}{}
+\lstnewenvironment{shell}[1][]{\lstset{style=bash,#1}}{}
+\lstnewenvironment{xcode}[1][]{\lstset{style=xml,#1}}{}
+\lstnewenvironment{trace}[1][]{\lstset{style=plain,#1}}{}
+
+% inline code
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\hex}[1]{\texttt{\small #1}}
+\newcommand{\reg}[1]{\textsf{\small #1}}
+
+% ---- callout boxes -----------------------------------------
+\newtcolorbox{analogybox}[1][]{
+  enhanced, breakable,
+  colback=breweramber!5, colframe=breweramber,
+  borderline west={2.6pt}{0pt}{breweramber},
+  frame hidden, arc=0pt, outer arc=0pt,
+  boxrule=0pt, left=10pt, right=10pt, top=8pt, bottom=8pt,
+  fonttitle=\sffamily\bfseries\small\color{breweramber},
+  title={ANALOGY}, attach title to upper={\par\vspace{3pt}},
+  #1
+}
+
+\newtcolorbox{trapbox}[1][]{
+  enhanced, breakable,
+  colback=brewerred!4, colframe=brewerred,
+  borderline west={2.6pt}{0pt}{brewerred},
+  frame hidden, arc=0pt, outer arc=0pt,
+  boxrule=0pt, left=10pt, right=10pt, top=8pt, bottom=8pt,
+  fonttitle=\sffamily\bfseries\small\color{brewerred},
+  title={TRAP}, attach title to upper={\par\vspace{3pt}},
+  #1
+}
+
+\newtcolorbox{conceptbox}[1][]{
+  enhanced, breakable,
+  colback=brewerblue!5, colframe=brewerblue,
+  borderline west={2.6pt}{0pt}{brewerblue},
+  frame hidden, arc=0pt, outer arc=0pt,
+  boxrule=0pt, left=10pt, right=10pt, top=8pt, bottom=8pt,
+  fonttitle=\sffamily\bfseries\small\color{brewerblue},
+  title={CONCEPT}, attach title to upper={\par\vspace{3pt}},
+  #1
+}
+
+\newtcolorbox{verifybox}[1][]{
+  enhanced, breakable,
+  colback=brewergreen!5, colframe=brewergreen,
+  borderline west={2.6pt}{0pt}{brewergreen},
+  frame hidden, arc=0pt, outer arc=0pt,
+  boxrule=0pt, left=10pt, right=10pt, top=8pt, bottom=8pt,
+  fonttitle=\sffamily\bfseries\small\color{brewergreen},
+  title={VERIFICATION GATE}, attach title to upper={\par\vspace{3pt}},
+  #1
+}
+
+\newtcolorbox{deepbox}[1][]{
+  enhanced, breakable,
+  colback=black!3, colframe=brewergrey,
+  borderline west={2.6pt}{0pt}{brewergrey},
+  frame hidden, arc=0pt, outer arc=0pt,
+  boxrule=0pt, left=10pt, right=10pt, top=8pt, bottom=8pt,
+  fonttitle=\sffamily\bfseries\small\color{brewergrey},
+  title={GOING DEEPER}, attach title to upper={\par\vspace{3pt}},
+  #1
+}
+
+% titled variants
+\newtcolorbox{analogy}[1]{enhanced,breakable,colback=breweramber!5,
+  borderline west={2.6pt}{0pt}{breweramber},frame hidden,arc=0pt,boxrule=0pt,
+  left=10pt,right=10pt,top=8pt,bottom=8pt,
+  title={\sffamily\bfseries\small\color{breweramber}ANALOGY\quad#1},
+  attach title to upper={\par\vspace{3pt}},colframe=breweramber}
+\newtcolorbox{trap}[1]{enhanced,breakable,colback=brewerred!4,
+  borderline west={2.6pt}{0pt}{brewerred},frame hidden,arc=0pt,boxrule=0pt,
+  left=10pt,right=10pt,top=8pt,bottom=8pt,
+  title={\sffamily\bfseries\small\color{brewerred}TRAP\quad#1},
+  attach title to upper={\par\vspace{3pt}},colframe=brewerred}
+\newtcolorbox{concept}[1]{enhanced,breakable,colback=brewerblue!5,
+  borderline west={2.6pt}{0pt}{brewerblue},frame hidden,arc=0pt,boxrule=0pt,
+  left=10pt,right=10pt,top=8pt,bottom=8pt,
+  title={\sffamily\bfseries\small\color{brewerblue}CONCEPT\quad#1},
+  attach title to upper={\par\vspace{3pt}},colframe=brewerblue}
+\newtcolorbox{deeper}[1]{enhanced,breakable,colback=black!3,
+  borderline west={2.6pt}{0pt}{brewergrey},frame hidden,arc=0pt,boxrule=0pt,
+  left=10pt,right=10pt,top=8pt,bottom=8pt,
+  title={\sffamily\bfseries\small\color{brewergrey}GOING DEEPER\quad#1},
+  attach title to upper={\par\vspace{3pt}},colframe=brewergrey}
+
+% ---- chapter opener block ----------------------------------
+% \chapterbrief{goal}{concept}{you end with}
+\newcommand{\chapterbrief}[3]{%
+  \begin{tcolorbox}[enhanced, colback=brewernavy!4, colframe=brewernavy!25,
+    arc=2pt, boxrule=0.5pt, left=12pt, right=12pt, top=10pt, bottom=10pt,
+    before skip=2pt, after skip=18pt]
+    \setlength{\parskip}{4pt}
+    {\sffamily\bfseries\footnotesize\color{brewernavy}GOAL}\quad #1\par
+    {\sffamily\bfseries\footnotesize\color{brewernavy}CONCEPT}\quad #2\par
+    {\sffamily\bfseries\footnotesize\color{brewernavy}YOU END WITH}\quad #3
+  \end{tcolorbox}}
+
+% ---- misc --------------------------------------------------
+\setlist[itemize]{leftmargin=1.35em, itemsep=2pt, topsep=4pt}
+\setlist[enumerate]{leftmargin=1.6em, itemsep=2pt, topsep=4pt}
+\renewcommand{\arraystretch}{1.22}
+\setlength{\parskip}{0.45em}
+\setlength{\parindent}{0pt}
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{1}
+
+% table helpers
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcommand{\thead}[1]{\textsf{\bfseries\small #1}}
+
+% a "symptom / cause" trap table
+\newenvironment{traptable}{%
+  \par\vspace{4pt}
+  \small
+  \begin{longtable}{L{0.42\linewidth} L{0.52\linewidth}}
+  \toprule \thead{You see} & \thead{Cause / fix} \\ \midrule
+  \endhead
+}{%
+  \bottomrule
+  \end{longtable}
+  \normalsize
+}

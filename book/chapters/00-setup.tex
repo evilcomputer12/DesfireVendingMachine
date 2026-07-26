@@ -1,0 +1,244 @@
+\chapter{Setup: hardware, Pi, and an empty project}
+\label{ch:setup}
+
+\chapterbrief
+  {An RC522 wired to a Pi, a Java project that compiles, and one green test.}
+  {None yet --- this chapter removes every excuse the environment can give you later.}
+  {\code{mvn compile} passing, and a chip you can talk to.}
+
+Nothing in this chapter is interesting, and that is the point. Every hour spent
+later wondering \emph{``is this my code or my wiring?''} is an hour you can buy
+back now by making the environment boring and trustworthy.
+
+\section{Wiring the RC522}
+\index{RC522!wiring}\index{SPI!wiring}
+
+The RC522 speaks SPI: six signal wires plus power.
+
+\begin{center}\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\thead{RC522 pin} & \thead{Pi pin} & \thead{Pi name} & \thead{Why} \\
+\midrule
+\reg{3.3V} & 1  & 3V3            & \textbf{Never 5\,V.} The MFRC522 is a 3.3\,V part. \\
+\reg{RST}  & 22 & BCM 25         & Hardware reset \\
+\reg{GND}  & 6  & GND            & \\
+\reg{MISO} & 21 & BCM 9 (MISO)   & Chip $\rightarrow$ Pi \\
+\reg{MOSI} & 19 & BCM 10 (MOSI)  & Pi $\rightarrow$ chip \\
+\reg{SCK}  & 23 & BCM 11 (SCLK)  & Clock \\
+\reg{SDA}  & 24 & BCM 8 (CE0)    & Chip select --- confusingly labelled with an I\textsuperscript{2}C name \\
+\reg{IRQ}  & --- & not connected & We poll instead; simpler, and fast enough \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}
+\begin{tikzpicture}[
+   pin/.style={font=\scriptsize\sffamily},
+   wire/.style={line width=0.9pt},
+   x=1cm,y=1cm]
+
+  % Pi header
+  \draw[rounded corners=2pt, brewernavy, line width=0.8pt] (0,0) rectangle (1.5,5.2);
+  \node[pin, color=brewernavy, rotate=90] at (0.32,2.6) {Raspberry Pi header};
+  \foreach \y/\lbl in {4.7/1, 4.1/6, 3.5/19, 2.9/21, 2.3/22, 1.7/23, 1.1/24}{
+     \fill[brewernavy!70] (1.05,\y) circle (1.6pt);
+     \node[pin, color=brewergrey, anchor=east] at (1.0,\y) {\lbl};
+  }
+
+  % RC522
+  \draw[rounded corners=2pt, breweramber!80!black, line width=0.8pt] (6.0,0.4) rectangle (8.4,5.0);
+  \node[pin, color=breweramber!70!black, rotate=90] at (8.1,2.7) {RC522};
+  \foreach \y/\lbl in {4.7/3.3V, 4.1/GND, 3.5/MOSI, 2.9/MISO, 2.3/RST, 1.7/SCK, 1.1/SDA}{
+     \fill[breweramber!80!black] (6.15,\y) circle (1.6pt);
+     \node[pin, color=brewergrey, anchor=west] at (6.3,\y) {\lbl};
+  }
+
+  % wires
+  \foreach \y/\c in {4.7/brewerred, 4.1/brewerink, 3.5/brewerblue,
+                     2.9/brewergreen, 2.3/breweramber, 1.7/brewerblue, 1.1/brewergreen}{
+     \draw[wire, color=\c!75] (1.05,\y) -- (6.15,\y);
+  }
+  \node[pin, color=brewergrey] at (3.6,5.35) {short wires --- this matters};
+\end{tikzpicture}
+\end{center}
+
+\begin{trap}{Long wires are not a style question}
+At 1\,MHz over 20\,cm of loose DuPont jumper you get intermittent failures that
+look exactly like firmware bugs: a version register that reads \hex{0x00} on one
+run and \hex{0x92} on the next.
+
+If the chip is flaky, \textbf{shorten the wires before you debug a single line
+of code}. More people have lost an evening to this than to any bug in this book.
+\end{trap}
+
+\section{Pi OS and SPI}
+
+Flash Raspberry Pi OS (64-bit), then enable SPI:
+
+\begin{shell}
+sudo raspi-config       # Interface Options -> SPI -> Enable
+sudo reboot
+ls -l /dev/spidev0.0    # must exist after the reboot
+\end{shell}
+
+\code{/dev/spidev0.0} is the kernel exposing ``SPI bus 0, chip-select 0'' as a
+file. That file is the entire hardware interface: everything in Part~II is
+ultimately reads and writes to it.
+
+Add your user to the hardware groups, or Pi4J cannot open the device:
+
+\begin{shell}
+sudo usermod -aG spi,gpio $USER    # log out and back in
+sudo apt update
+sudo apt install -y openjdk-21-jdk maven
+java -version                      # expect 21.x
+\end{shell}
+
+\section{Create the project}
+
+Develop on a laptop and deploy to the Pi. Compiling on a Zero 2 W is slow
+enough to break your concentration.
+
+\begin{shell}
+mkdir midnight-brewer && cd midnight-brewer
+git init
+mkdir -p src/main/java/com/midnightbrewer/hardware
+mkdir -p src/test/java/com/midnightbrewer/hardware
+\end{shell}
+
+\subsection{The \texttt{pom.xml}}
+
+Maven's project file. Three things matter: Java 21, JUnit 5, and Pi4J.
+
+\begin{xcode}
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.midnightbrewer</groupId>
+  <artifactId>MidnightBrewer</artifactId>
+  <version>1.0-SNAPSHOT</version>
+
+  <properties>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <pi4j.version>3.0.2</pi4j.version>
+  </properties>
+
+  <dependencies>
+    <!-- Pi4J: Java access to the Pi's SPI and GPIO -->
+    <dependency>
+      <groupId>com.pi4j</groupId><artifactId>pi4j-core</artifactId>
+      <version>${pi4j.version}</version>
+    </dependency>
+    <!-- the SPI provider: talks to /dev/spidev0.0 -->
+    <dependency>
+      <groupId>com.pi4j</groupId><artifactId>pi4j-plugin-linuxfs</artifactId>
+      <version>${pi4j.version}</version>
+    </dependency>
+    <!-- the GPIO provider, for the reset pin -->
+    <dependency>
+      <groupId>com.pi4j</groupId><artifactId>pi4j-plugin-gpiod</artifactId>
+      <version>${pi4j.version}</version>
+    </dependency>
+    <!-- Pi4J logs through SLF4J; without a binding it prints warnings -->
+    <dependency>
+      <groupId>org.slf4j</groupId><artifactId>slf4j-simple</artifactId>
+      <version>2.0.13</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId>
+      <version>5.10.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build><plugins>
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId>
+      <artifactId>maven-surefire-plugin</artifactId>
+      <version>3.2.5</version>
+    </plugin>
+  </plugins></build>
+</project>
+\end{xcode}
+
+\begin{concept}{\texttt{<scope>test</scope>} is a boundary, not a detail}
+It means ``this library exists when compiling and running tests, but is not
+shipped with the application.'' Get it wrong and your kiosk drags a test
+framework onto the Pi.
+
+More usefully, it \emph{enforces} the boundary: if you accidentally
+\code{import org.junit} in main code, the build fails. A dependency scope is the
+build system letting you state a design rule and have it checked.
+\end{concept}
+
+\begin{shell}
+mvn -q compile     # should print nothing and exit 0
+\end{shell}
+
+There is nothing to compile yet. You have proven that Maven, Java and the
+network can all do their jobs --- which is exactly one fewer thing that can be
+wrong tomorrow.
+
+\section{Java for a C programmer}
+\index{Java!versus C}
+
+You will meet the rest as you go, but four things trip up every C programmer on
+the first day.
+
+\subsection{Every function lives inside a class}
+
+There are no free functions. \code{Math.abs()} is a function \code{abs} inside a
+class \code{Math}. A file \code{Foo.java} contains \code{class Foo}. This feels
+bureaucratic, and for small programs it is --- but it is also why the language
+can make guarantees C cannot, and Part~II is where those guarantees start paying
+for themselves.
+
+\subsection{\texttt{byte} is signed, and there is no \texttt{unsigned}}
+\index{signed byte}
+
+This will bite you within the hour.
+
+\begin{jcode}
+byte b = (byte) 0x92;
+System.out.println(b);          // -110   <-- the same bits, read as signed
+System.out.println(b & 0xFF);   // 146    <-- what you meant
+\end{jcode}
+
+\hex{0x92} is \code{1001 0010}. With the top bit set, Java reads it as negative.
+The fix is the idiom \code{\& 0xFF}, which promotes to \code{int} and masks off
+the sign extension.
+
+\begin{trap}{The \texttt{\& 0xFF} habit}
+\textbf{Any time you turn a \code{byte} into a number, write \code{\& 0xFF}.}
+You will forget this at least once and lose an hour to a register that reads
+$-110$ instead of \hex{0x92}. Everyone does. Now you have been warned, and you
+will still do it.
+\end{trap}
+
+\subsection{Arrays know their own length, and are bounds-checked}
+
+\code{arr.length} --- no parentheses, it is a field. Reading past the end throws
+an exception naming the line, rather than silently returning whatever was next in
+memory. This converts C's worst class of bug into a stack trace.
+
+\subsection{No manual memory management}
+
+No \code{malloc}, no \code{free}. \code{new byte[16]} gives you sixteen
+\emph{zeroed} bytes, and they vanish when nothing refers to them. The zeroing
+matters more than you would think: several structures in this book are ``a
+16-byte buffer that is mostly zeros'', and you get that for free.
+
+\medskip
+One C habit transfers perfectly: bit manipulation. \code{<<}, \code{>>},
+\code{\&}, \code{|}, \code{\^{}} and \code{\~{}} all mean exactly what they mean
+in C. The register-poking half of this project will feel like home.
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "chore: empty Maven project, Java 21, Pi4J + JUnit"
+\end{shell}

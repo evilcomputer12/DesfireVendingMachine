@@ -1,0 +1,150 @@
+% ============================================================
+%  THE MIDNIGHT BREWER
+%  Building a contactless payment terminal from scratch
+%
+%  Build:  latexmk -pdf brewer-book.tex
+%  (or:    pdflatex brewer-book && makeindex brewer-book && pdflatex x2)
+% ============================================================
+\documentclass[11pt,twoside,openright]{book}
+
+\input{preamble}
+
+\begin{document}
+
+% ============================================================
+\frontmatter
+% ============================================================
+
+% ---------- title page ----------
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+\vspace*{0.55in}
+
+{\sffamily\fontsize{15}{18}\selectfont\color{brewergrey}
+ THE\quad MIDNIGHT\quad BREWER\par}
+
+\vspace{0.42in}
+{\color{brewernavy}\rule{3.1in}{1.1pt}}\par
+\vspace{0.30in}
+
+{\sffamily\bfseries\fontsize{31}{36}\selectfont\color{brewernavy}
+ Building a Contactless\\[3pt] Payment Terminal\\[3pt] From Scratch\par}
+
+\vspace{0.28in}
+{\color{brewernavy}\rule{3.1in}{1.1pt}}\par
+\vspace{0.34in}
+
+{\fontsize{13}{18}\selectfont\itshape
+ From SPI bytes to AES mutual authentication ---\\
+ every layer written by hand, on a \pounds3 reader\\ and a Raspberry Pi.\par}
+
+\vspace{0.50in}
+
+% --- a small card-tap vignette ---
+\begin{tikzpicture}[scale=1.0]
+  % reader
+  \draw[rounded corners=2pt, brewernavy, line width=0.9pt]
+        (0,0) rectangle (2.6,1.7);
+  \node[font=\sffamily\tiny, color=brewergrey] at (1.3,0.28) {RC522};
+  % antenna coil
+  \foreach \i in {0,1,2}{
+    \draw[brewernavy!45, line width=0.5pt, rounded corners=1pt]
+      (0.45+0.11*\i,0.62+0.09*\i) rectangle (2.15-0.11*\i,1.42-0.09*\i);
+  }
+  % card
+  \draw[rounded corners=3pt, draw=breweramber, fill=breweramber!10, line width=0.9pt]
+        (1.55,0.95) rectangle (4.15,2.55);
+  \draw[breweramber!70, line width=0.6pt, rounded corners=1pt]
+        (1.85,1.85) rectangle (2.45,2.3);
+  \foreach \y in {1.95,2.09,2.23}{ \draw[breweramber!70, line width=0.5pt] (1.85,\y)--(2.45,\y); }
+  \node[font=\sffamily\tiny, color=breweramber!80!black] at (3.3,1.3) {DESFire EV3};
+  % waves
+  \foreach \r in {0.34,0.55,0.76}{
+    \draw[brewernavy!55, line width=0.7pt] (1.6,2.0) ++(150:\r) arc (150:210:\r);
+  }
+\end{tikzpicture}
+
+\vfill
+{\sffamily\small\color{brewergrey}
+ A build-it-yourself book\quad$\cdot$\quad Java\;$\cdot$\;Dart\;$\cdot$\;C-to-OOP\par}
+\vspace{6pt}
+{\sffamily\footnotesize\color{brewergrey} Revision \today\par}
+\end{titlepage}
+
+\cleardoublepage
+
+% ---------- colophon ----------
+\thispagestyle{empty}
+\vspace*{\fill}
+{\small
+\textbf{The Midnight Brewer: Building a Contactless Payment Terminal From Scratch}\par
+\vspace{8pt}
+A companion to the \code{DesfireVendingMachine} project. Every implementation
+described here exists, runs on a Raspberry Pi Zero~2~W with a \pounds3 MFRC522
+module, and debits a real MIFARE DESFire EV3 card.\par
+\vspace{10pt}
+\textbf{On the code in this book.} The listings are deliberately incomplete.
+They give you the class shape, the constants and the byte layouts, and leave
+the logic as \code{TODO}. That is the method, not an oversight --- see
+\emph{How to use this book} on page~\pageref{sec:howtouse}.\par
+\vspace{10pt}
+\textbf{Safety.} Chapter~\ref{ch:android} describes commands that can
+\emph{permanently} destroy a contactless card. Use dedicated test cards.
+Never run provisioning against a card you did not buy for this project.\par
+\vspace{10pt}
+\textbf{Security.} The keys printed in this book are bench keys, published
+here on purpose. They protect nothing. Section~\ref{sec:realkeys} explains what
+a real deployment does instead.\par
+}
+\vspace*{\fill}
+
+\cleardoublepage
+\tableofcontents
+
+\cleardoublepage
+\input{frontmatter/preface}
+
+% ============================================================
+\mainmatter
+% ============================================================
+
+\part{Groundwork}
+\input{chapters/00-setup}
+
+\part{Talking to the Chip}
+\input{chapters/01-spi-seam}
+\input{chapters/02-driver}
+
+\part{Talking to the Card}
+\input{chapters/03-reader-template}
+\input{chapters/04-blocks}
+\input{chapters/05-activation}
+\input{chapters/06-apdu-channel}
+
+\part{Cryptography}
+\input{chapters/07-cmac}
+\input{chapters/08-session-keys}
+\input{chapters/09-authenticate}
+\input{chapters/10-secure-messaging}
+
+\part{Product}
+\input{chapters/11-kiosk}
+\input{chapters/12-android-topup}
+\input{chapters/13-deploy}
+
+% ============================================================
+\appendix
+\part{Appendices}
+\input{appendices/A-test-vectors}
+\input{appendices/B-troubleshooting}
+\input{appendices/C-video-plan}
+
+% ============================================================
+\backmatter
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Index}
+\printindex
+
+\end{document}

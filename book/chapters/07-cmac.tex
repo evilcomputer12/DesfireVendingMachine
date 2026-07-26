@@ -1,0 +1,417 @@
+\chapter{AES-CMAC from scratch}
+\label{ch:cmac}
+
+\chapterbrief
+  {Build the message authentication code DESFire EV2 runs on.}
+  {Immutable objects and constructor invariants.}
+  {The RFC 4493 known-answer vectors passing.}
+
+\section{Read this before you write any cryptography}
+
+Everything from here on is \textbf{verified against known-answer test vectors
+before it touches hardware}. This is not caution for its own sake.
+
+Cryptographic code has a property no other code you have written has:
+\textbf{wrong output is indistinguishable from right output.} A broken CRC gives
+you a mismatch you can see. A broken CMAC gives you sixteen bytes of
+perfect-looking randomness --- exactly like a correct CMAC. You cannot eyeball
+it, you cannot reason about it from a failed transaction, and if you build three
+more layers before testing you will have no idea which one is lying.
+
+On real hardware it is worse. A bad MAC does not merely fail: the card may
+increment an internal error counter, and enough consecutive failures can
+permanently lock a key.
+
+\begin{center}\itshape\color{brewerred}
+Vectors first. Silicon second.
+\end{center}
+
+\section{What a MAC is}
+
+A \textbf{Message Authentication Code} answers one question: \emph{was this
+message written by someone holding the secret key, and has it been altered?}
+
+It is a keyed checksum. A CRC tells you a message survived the wire; a MAC tells
+you it survived an \emph{adversary}. Without the key you cannot compute a valid
+MAC, so you cannot forge or tamper.
+
+\begin{analogy}{The wax seal}
+A wax seal on a letter. Anyone can read the letter, but only the person with the
+signet ring can produce the seal, and breaking it to alter the contents is
+obvious.
+
+The ring is the key; the seal is the MAC. Crucially the seal does not \emph{hide}
+the letter --- MACs authenticate, they do not encrypt. Those are separate jobs,
+and DESFire uses both.
+\end{analogy}
+
+\textbf{CMAC} (RFC 4493 / NIST SP 800-38B) builds a MAC out of a block cipher
+you already have. Roughly: it is CBC-mode encryption where you throw away
+everything except the last block. That final block depends on every bit of the
+message and on the key, so it works as a fingerprint.
+
+The subtlety CMAC adds --- and the reason it is not simply ``CBC-MAC'' --- is how
+it handles the \textbf{last block}, where naive CBC-MAC has a forgery weakness.
+CMAC derives two subkeys, $K_1$ and $K_2$, and XORs one of them into the final
+block depending on whether the message needed padding. That is the whole trick.
+
+\section{The algorithm}
+
+\subsection{Part 1 --- subkey generation (RFC 4493 §2.3)}
+
+\begin{trace}
+L  = AES-ECB(K, 0^128)                 encrypt an all-zero block
+K1 = L << 1;   if MSB(L)  was set:  K1 ^= Rb
+K2 = K1 << 1;  if MSB(K1) was set:  K2 ^= Rb
+\end{trace}
+
+\begin{itemize}
+  \item $R_b = $ \hex{0x87}, the constant from AES's finite-field polynomial.
+        ``\code{\^{}= Rb}'' means XOR \emph{the last byte} with \hex{0x87}.
+  \item ``MSB set'' means the top bit of the \emph{first} byte:
+        \code{(x[0] \& 0x80) != 0}.
+  \item \code{<< 1} shifts the whole 128-bit block left one bit --- the bit that
+        falls off byte $i{+}1$'s top becomes byte $i$'s bottom.
+\end{itemize}
+
+That last one is the only fiddly part, and in C you would write it identically:
+
+\begin{jcode}
+byte[] out = new byte[16];
+int carry = 0;
+for (int i = 15; i >= 0; i--) {      // walk BACKWARDS, low byte first
+    int b = in[i] & 0xFF;
+    out[i] = (byte) ((b << 1) | carry);
+    carry = (b >> 7) & 1;            // the bit shifted out of this byte
+}
+\end{jcode}
+
+You walk from the last byte to the first because a carry propagates
+\emph{upward}, toward the more significant end.
+
+\subsection{Part 2 --- the MAC (RFC 4493 §2.4)}
+
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize\sffamily, node distance=5mm,
+  blk/.style={draw=brewergrey, rounded corners=1pt, minimum width=13mm,
+              minimum height=6mm, inner sep=2pt},
+  op/.style={draw=brewernavy, circle, inner sep=1pt, minimum size=4.5mm},
+  aes/.style={draw=brewernavy, fill=brewernavy!8, rounded corners=1pt,
+              minimum width=13mm, minimum height=6mm}]
+  \node[blk] (m1) {$M_1$};
+  \node[blk, right=14mm of m1] (m2) {$M_2$};
+  \node[blk, right=14mm of m2, draw=breweramber] (ml) {$M_{last}$};
+
+  \node[op, below=5mm of m1] (x1) {$\oplus$};
+  \node[op, below=5mm of m2] (x2) {$\oplus$};
+  \node[op, below=5mm of ml] (xl) {$\oplus$};
+
+  \node[aes, below=4mm of x1] (a1) {AES$_K$};
+  \node[aes, below=4mm of x2] (a2) {AES$_K$};
+  \node[aes, below=4mm of xl] (al) {AES$_K$};
+
+  \node[left=7mm of x1, font=\scriptsize] (zero) {$0^{128}$};
+
+  \draw[-{Stealth[length=3pt]}] (m1) -- (x1);
+  \draw[-{Stealth[length=3pt]}] (m2) -- (x2);
+  \draw[-{Stealth[length=3pt]}] (ml) -- (xl);
+  \draw[-{Stealth[length=3pt]}] (zero) -- (x1);
+  \draw[-{Stealth[length=3pt]}] (x1) -- (a1);
+  \draw[-{Stealth[length=3pt]}] (x2) -- (a2);
+  \draw[-{Stealth[length=3pt]}] (xl) -- (al);
+  \draw[-{Stealth[length=3pt]}] (a1) -- (x2);
+  \draw[-{Stealth[length=3pt]}] (a2) -- (xl);
+  \node[below=4mm of al, font=\scriptsize\bfseries, color=brewergreen] (t) {CMAC};
+  \draw[-{Stealth[length=3pt]}] (al) -- (t);
+
+  \node[above=4mm of ml, align=center, font=\tiny, color=breweramber!80!black]
+       {full block: $\oplus K_1$\\ padded: $\oplus K_2$};
+\end{tikzpicture}
+\end{center}
+
+\begin{trace}
+split the message into 16-byte blocks M_1 ... M_n
+the LAST block is special:
+    if it is exactly 16 bytes:   M_last = M_n XOR K1
+    otherwise (incl. empty):     pad it (append 0x80 then 0x00s to 16)
+                                 M_last = padded XOR K2
+then CBC-MAC:
+    X = 0^128
+    for each block except the last:   X = AES(K, X XOR M_i)
+    T = AES(K, X XOR M_last)          <- the CMAC
+\end{trace}
+
+The $K_1$ versus $K_2$ choice is what makes ``a 16-byte message'' and ``a 15-byte
+message padded to 16'' produce different MACs. Without it, an attacker could
+exploit the ambiguity.
+
+\section{Build it}
+
+First, thin AES helpers. This is the one piece handed to you complete ---
+reimplementing AES itself teaches you nothing here, and the JDK's is correct and
+fast.
+
+\begin{jcode}
+package com.midnightbrewer.hardware.crypto;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+/**
+ * Thin AES-128 helpers over the JDK's crypto provider.
+ *
+ * NoPadding everywhere: DESFire does its own ISO 7816-4 padding, and letting
+ * the JDK add PKCS#5 on top would corrupt every frame.
+ */
+public final class Aes {
+
+    public static final int BLOCK = 16;
+
+    private Aes() { }
+
+    public static byte[] ecbEncrypt(byte[] key, byte[] block) {
+        try {
+            Cipher c = Cipher.getInstance("AES/ECB/NoPadding");
+            c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"));
+            return c.doFinal(block);
+        } catch (Exception e) {
+            throw new IllegalStateException("AES-ECB failed", e);
+        }
+    }
+
+    public static byte[] cbcEncrypt(byte[] key, byte[] iv, byte[] data) {
+        try {
+            Cipher c = Cipher.getInstance("AES/CBC/NoPadding");
+            c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"),
+                   new IvParameterSpec(iv));
+            return c.doFinal(data);
+        } catch (Exception e) {
+            throw new IllegalStateException("AES-CBC encrypt failed", e);
+        }
+    }
+
+    public static byte[] cbcDecrypt(byte[] key, byte[] iv, byte[] data) {
+        try {
+            Cipher c = Cipher.getInstance("AES/CBC/NoPadding");
+            c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"),
+                   new IvParameterSpec(iv));
+            return c.doFinal(data);
+        } catch (Exception e) {
+            throw new IllegalStateException("AES-CBC decrypt failed", e);
+        }
+    }
+
+    public static byte[] xor(byte[] a, byte[] b) {
+        byte[] out = new byte[a.length];
+        for (int i = 0; i < a.length; i++) {
+            out[i] = (byte) (a[i] ^ b[i]);
+        }
+        return out;
+    }
+}
+\end{jcode}
+
+Now the part you write.
+
+\begin{jcode}
+package com.midnightbrewer.hardware.crypto;
+
+/**
+ * AES-CMAC (RFC 4493) -- the MAC DESFire EV2 uses. The JDK has no CMAC, so
+ * this is the from-scratch part; you are not reimplementing AES, you are
+ * building the CMAC construction on top of Aes.ecbEncrypt.
+ *
+ * OOP on show: the key and the two derived subkeys are computed ONCE in the
+ * constructor and kept private. compute() never mutates them. That makes this
+ * an immutable object with an invariant established at birth: "if this object
+ * exists, its subkeys are correct and match its key."
+ */
+public final class AesCmac {
+
+    private static final int BLOCK = 16;
+    private static final byte RB = (byte) 0x87;  // AES field polynomial
+
+    private final byte[] key;
+    private final byte[] k1;
+    private final byte[] k2;
+
+    public AesCmac(byte[] key) {
+        if (key.length != BLOCK) {
+            throw new IllegalArgumentException("AES-128 key must be 16 bytes");
+        }
+        this.key = key.clone();
+        byte[][] subkeys = generateSubkeys(key);
+        this.k1 = subkeys[0];
+        this.k2 = subkeys[1];
+    }
+
+    // ---- RFC 4493 section 2.3 ----
+    private static byte[][] generateSubkeys(byte[] key) {
+        // TODO 1: byte[] l = Aes.ecbEncrypt(key, new byte[BLOCK]);
+        // TODO 2: byte[] k1 = leftShift(l);
+        //         if ((l[0] & 0x80) != 0) k1[15] ^= RB;
+        // TODO 3: byte[] k2 = leftShift(k1);
+        //         if ((k1[0] & 0x80) != 0) k2[15] ^= RB;
+        // TODO 4: return new byte[][]{ k1, k2 };
+        return new byte[][]{ new byte[BLOCK], new byte[BLOCK] };
+    }
+
+    /** Shift a 16-byte block left by ONE bit, as a single 128-bit number. */
+    private static byte[] leftShift(byte[] in) {
+        // TODO: walk from the LAST byte to the first, carrying the top bit
+        //       of each byte down into the next. (See the chapter text.)
+        return new byte[BLOCK];
+    }
+
+    // ---- RFC 4493 section 2.4 ----
+    public byte[] compute(byte[] message) {
+        // TODO 1: how many blocks, and is the last one full?
+        //   if (message.length == 0) { n = 1; lastComplete = false; }
+        //   else { n = ceil(message.length / 16.0);
+        //          lastComplete = (message.length % 16 == 0); }
+
+        // TODO 2: build M_last.
+        //   if lastComplete: mLast = Aes.xor(lastBlock, k1)
+        //   else: pad into a 16-byte buffer -- copy the leftover bytes,
+        //         set padded[leftoverLen] = (byte) 0x80, rest stays zero;
+        //         mLast = Aes.xor(padded, k2)
+
+        // TODO 3: CBC-MAC through the blocks:
+        //   byte[] x = new byte[BLOCK];
+        //   for (int i = 0; i < n - 1; i++)
+        //       x = Aes.ecbEncrypt(key, Aes.xor(x, i-th 16-byte slice));
+        //   return Aes.ecbEncrypt(key, Aes.xor(x, mLast));
+        return new byte[BLOCK];
+    }
+}
+\end{jcode}
+
+\begin{concept}{Establish invariants in the constructor}
+\index{invariant}
+Why compute the subkeys in the constructor? Partly efficiency --- they are a pure
+function of the key, and recomputing them per call would waste an AES operation
+on every MAC.
+
+But the deeper reason is \textbf{the invariant}. The constructor is the one place
+that can guarantee ``this object is valid''. It checks the key length and derives
+the subkeys; afterwards the object cannot be in a bad state, because nothing can
+change it.
+
+Contrast a design with a \code{setKey()} method. Now every method must ask: has
+the key been set? Are the subkeys stale? Those questions do not exist if you make
+them impossible.
+
+\textbf{Establish invariants in the constructor, make fields \code{final},
+expose no setters.} Half of ``good OOP'' is that one habit.
+\end{concept}
+
+\section{Verify --- RFC 4493 vectors}
+
+These come from the RFC itself: independent of you, independent of this book,
+and definitive.
+
+\textbf{Key} $K = $ \hex{2b7e151628aed2a6abf7158809cf4f3c}
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.44\linewidth}L{0.46\linewidth}@{}}
+\toprule
+\thead{Message} & \thead{Expected CMAC} \\
+\midrule
+\emph{(empty)} & \hex{bb1d6929e95937287fa37d129b756746} \\
+\hex{6bc1bee22e409f96e93d7e117393172a} & \hex{070a16b46b4d4144f79bdd9dd04a287c} \\
+\hex{6bc1bee22e409f96e93d7e117393172a}\newline
+\hex{ae2d8a571e03ac9c9eb76fac45af8e51}\newline
+\hex{30c81c46a35ce411} \emph{(40 B)} & \hex{dfa66747de9ae63030ca32611497c827} \\
+the above $+$ \hex{e5fbc1191a0a52ef}\newline
+\hex{f69f2445df4f9b17ad2b417be66c3710} \emph{(64 B)} & \hex{51f0bebf7e3b9d92fc49741779363cfe} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Those four are chosen to hit every branch: empty (pad, $K_2$), exactly one block
+($K_1$), a partial last block (pad, $K_2$), and multiple full blocks ($K_1$). If
+all four pass, your implementation is right.
+
+The subkeys, useful mid-debug:
+
+\begin{trace}
+K1 = fbeed618357133667c85e08f7236a8de
+K2 = f7ddac306ae266ccf90bc11ee46d513b
+\end{trace}
+
+\begin{jcode}
+package com.midnightbrewer.hardware.crypto;
+
+import org.junit.jupiter.api.Test;
+import java.util.HexFormat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class AesCmacTest {
+
+    private static final byte[] K =
+            HexFormat.of().parseHex("2b7e151628aed2a6abf7158809cf4f3c");
+
+    private static String mac(String messageHex) {
+        byte[] m = HexFormat.of().parseHex(messageHex);
+        return HexFormat.of().formatHex(new AesCmac(K).compute(m));
+    }
+
+    @Test
+    void rfc4493_example1_empty() {
+        assertEquals("bb1d6929e95937287fa37d129b756746", mac(""));
+    }
+
+    @Test
+    void rfc4493_example2_oneBlock() {
+        assertEquals("070a16b46b4d4144f79bdd9dd04a287c",
+                mac("6bc1bee22e409f96e93d7e117393172a"));
+    }
+
+    @Test
+    void rfc4493_example3_partialLastBlock() {
+        assertEquals("dfa66747de9ae63030ca32611497c827",
+                mac("6bc1bee22e409f96e93d7e117393172a"
+                  + "ae2d8a571e03ac9c9eb76fac45af8e51"
+                  + "30c81c46a35ce411"));
+    }
+
+    @Test
+    void rfc4493_example4_fullBlocks() {
+        assertEquals("51f0bebf7e3b9d92fc49741779363cfe",
+                mac("6bc1bee22e409f96e93d7e117393172a"
+                  + "ae2d8a571e03ac9c9eb76fac45af8e51"
+                  + "30c81c46a35ce411e5fbc1191a0a52ef"
+                  + "f69f2445df4f9b17ad2b417be66c3710"));
+    }
+}
+\end{jcode}
+
+\begin{verifybox}
+\begin{shell}
+mvn test -Dtest=AesCmacTest      # all four must be green
+\end{shell}
+Those four numbers were published in 2006 by people who have never seen your
+code. If your code reproduces them exactly, that is not ``it seems to work'' ---
+that is proof.
+\end{verifybox}
+
+\code{HexFormat} is a Java 17+ built-in, so no dependency is needed for hex
+parsing and printing --- which you will do constantly from here on.
+
+\section{Traps}
+
+\begin{traptable}
+Empty-message vector fails, others pass & Missing the \code{n=1, lastComplete=false} special case. \\
+Partial-block vectors fail & Padding wrong: it is \hex{0x80} then zeros, not all zeros. \\
+Full-block vectors fail & Using $K_2$ where $K_1$ belongs, or vice versa. \\
+All four fail, all plausible-looking & \code{leftShift} carry direction --- you must walk backwards. \\
+Sporadic wrong results & You mutated \code{key} or a subkey. They must be write-once. \\
+\end{traptable}
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "M7a: AES-CMAC (RFC 4493), verified against the RFC vectors"
+\end{shell}

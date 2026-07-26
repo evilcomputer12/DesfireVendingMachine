@@ -1,0 +1,384 @@
+\chapter{The reader base class}
+\label{ch:reader}
+
+\chapterbrief
+  {Send a frame to a card and get its answer back.}
+  {Abstract classes, and the Template Method pattern.}
+  {\code{isCardPresent()} detecting a real DESFire.}
+
+\section{The problem}
+
+You can read registers. Now you need to \emph{talk to a card}, which means a
+fixed sequence: tell the chip how many bits are in the last byte, flush the
+FIFO, clear old interrupt flags, load the outgoing bytes, start the transceive
+command, wait for a reply or a timeout, check the error register, and read the
+reply out.
+
+Here is the thing: \textbf{those steps are RC522-specific, but the protocol
+above them is not.} ``Send REQA, expect a two-byte ATQA'' is ISO-14443 ---
+identical on a PN532, a PN5180, or an ACR122. Write the protocol logic
+\emph{inside} an RC522 class and you must rewrite all of it to support a second
+chip.
+
+\section{The idea: leave a hole in the middle of the algorithm}
+\index{Template Method}
+
+Write the protocol once, in a base class, and leave the chip-specific step
+\textbf{blank} --- a method with a name and a signature but no body. Subclasses
+fill the blank. The base class calls the blank as if it were already written.
+
+That is the \textbf{Template Method} pattern: the parent owns the \emph{shape}
+of the algorithm, the children supply the \emph{steps}.
+
+\begin{analogy}{The recipe with one variable step}
+A stir-fry recipe: heat the oil, \textbf{cook the protein}, add vegetables, add
+sauce, serve. The sequence is fixed --- you never add sauce before the oil is hot.
+
+But ``cook the protein'' is a hole. Chicken takes six minutes, prawns two, tofu
+wants pressing first. The cookbook writes the sequence; the specific dish fills
+the hole.
+
+Critically, the recipe \emph{calls} the hole without knowing what goes in it.
+\code{isCardPresent()} calls \code{transceive()}, and at runtime that call lands
+in \code{Rc522Reader}, or \code{Pn532Reader}, or a fake. The base class never
+learns which.
+\end{analogy}
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,
+  tstep/.style={draw=brewergrey, rounded corners=2pt, minimum width=44mm,
+               minimum height=6.5mm, inner sep=3pt},
+  hole/.style={draw=breweramber, dashed, fill=breweramber!8, rounded corners=2pt,
+               minimum width=44mm, minimum height=6.5mm, inner sep=3pt}]
+  \node[tstep] (s1) {1. send REQA (7-bit frame)};
+  \node[hole, below=2.2mm of s1] (h1) {\itshape transceive() -- the blank};
+  \node[tstep, below=2.2mm of h1] (s2) {2. is the reply a valid ATQA?};
+  \node[tstep, below=2.2mm of s2] (s3) {3. if silent, retry with WUPA};
+  \node[draw=brewernavy, rounded corners=2pt, fit=(s1)(s3), inner sep=4mm] (box) {};
+  \node[font=\scriptsize\sffamily\bfseries, color=brewernavy, above=0.5mm of box.north west,
+        anchor=west] {\code{Iso14443Reader.isCardPresent()} -- final};
+  \node[draw=breweramber, rounded corners=2pt, right=16mm of h1,
+        minimum width=32mm, minimum height=9mm, inner sep=3pt,
+        align=center, font=\scriptsize\sffamily] (impl)
+        {\code{Rc522Reader}\\ fills the blank};
+  \draw[-{Stealth[length=4pt]}, breweramber, dashed] (impl) -- (h1);
+\end{tikzpicture}
+\end{center}
+
+\subsection{Why an abstract class and not an interface}
+\index{abstract class}
+
+An interface holds method signatures but no state. Here you need \emph{both}:
+real shared code (the protocol) \emph{and} a blank (the chip step). That mix is
+exactly what an abstract class is for.
+
+\begin{center}\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+ & \thead{interface} & \thead{abstract class} \\
+\midrule
+Method signatures    & yes & yes \\
+Real method bodies   & mostly no & yes \\
+Fields / state       & no  & yes \\
+Can be instantiated  & no  & no  \\
+A class can have many & yes & no (one parent) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{concept}{Which one to reach for}
+\textbf{Interface} = ``can do this'' --- a capability, like \code{SpiLink}.
+
+\textbf{Abstract class} = ``is a kind of this'' --- a family sharing machinery,
+like \code{Iso14443Reader}.
+\end{concept}
+
+\section{Build it}
+
+\subsection{The base}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+/**
+ * An abstract base for any ISO-14443 reader.
+ *
+ * The protocol logic is a standard: identical for an RC522, a PN532, anything.
+ * That logic lives HERE, written once. What differs per chip is only how you
+ * physically push a frame out and read the reply -- left BLANK for each chip's
+ * subclass to fill.
+ */
+public abstract class Iso14443Reader {
+
+    // ---- ISO 14443-3 constants (chip-independent) ----
+    private static final byte REQA = 0x26; // "any IDLE card, announce yourself"
+    private static final byte WUPA = 0x52; // "any IDLE *or* HALTed card, wake up"
+
+    /** A valid ATQA answer is exactly two bytes. */
+    private static final int ATQA_LENGTH = 2;
+
+    /** REQA/WUPA are 7-bit short frames, not whole bytes. */
+    private static final int REQA_BITS = 7;
+
+    // =================================================================
+    // THE BLANK. 'abstract' = declared, no body. A subclass MUST supply
+    // one or it will not compile.
+    //
+    //   sendData       : bytes to transmit
+    //   bitsInLastByte : valid bits in the final byte (7 for REQA, 0 = all 8)
+    //   returns        : bytes received, or an EMPTY array if nothing answered.
+    //
+    // Note "empty array" rather than an exception: a timeout is NORMAL when no
+    // card is on the antenna. Exceptions are for the exceptional.
+    // =================================================================
+    protected abstract byte[] transceive(byte[] sendData, int bitsInLastByte)
+            throws SpiException;
+
+    /**
+     * The second blank: compute the 2-byte CRC_A over data.
+     *
+     * SELECT and RATS need a CRC appended; anticollision does not. The RC522
+     * has a hardware CRC unit, another chip might not -- so, like transceive,
+     * it is left for the subclass. An abstract class may carry as many blanks
+     * as the design needs.
+     *
+     * @return two CRC bytes, low first, ready to append.
+     */
+    protected abstract byte[] calculateCrc(byte[] data) throws SpiException;
+
+    // =================================================================
+    // THE TEMPLATE METHOD -- the fixed algorithm, shared by all chips.
+    //
+    // 'final' on purpose: a subclass may fill the blanks, but may NOT rewrite
+    // the sequence. The protocol is the protocol.
+    // =================================================================
+    public final boolean isCardPresent() throws SpiException {
+        // TODO 1: try REQA; if that finds a card, return true.
+        // TODO 2: otherwise try WUPA and return that result.
+        //
+        //   Why both? REQA only wakes cards in IDLE. A card you already talked
+        //   to sits in HALT and ignores REQA forever -- WUPA wakes those too.
+        //   Without this, the reader works ONCE and then goes blind until the
+        //   card is physically removed and replaced.
+        return false;
+    }
+
+    /** Sends one REQA/WUPA and reports whether a well-formed ATQA came back. */
+    private boolean request(byte mode) throws SpiException {
+        // TODO: transceive a single-byte frame { mode } with REQA_BITS bits,
+        //       and return whether the reply length == ATQA_LENGTH.
+        return false;
+    }
+}
+\end{jcode}
+
+\begin{concept}{\texttt{public}, \texttt{protected}, \texttt{private}}
+\code{protected} means ``visible to this class and its subclasses, but not the
+outside world''. \code{transceive} is an implementation detail of the reader
+family --- the kiosk should never call it.
+
+\textbf{\code{public} for the vocabulary, \code{protected} for the family,
+\code{private} for the class alone.} Choosing these deliberately is most of what
+designing a class \emph{is}.
+
+And \code{final} on \code{isCardPresent()} encodes a design decision in the type
+system: \emph{chips vary, the standard does not.} Deciding what subclasses may
+and may not change is the real work of writing a base class.
+\end{concept}
+
+\subsection{The RC522 subclass}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+/**
+ * The RC522's answer to the two blanks in Iso14443Reader.
+ *
+ * 'extends' = inheritance: this IS-A Iso14443Reader and gets all its protocol
+ * code for free. It supplies only the two chip-specific steps.
+ */
+public class Rc522Reader extends Iso14443Reader {
+
+    // ---- registers this needs ----
+    private static final int COMMAND_REG     = 0x01;
+    private static final int COMM_IEN_REG    = 0x02; // which IRQs are enabled
+    private static final int COMM_IRQ_REG    = 0x04; // which IRQs have fired
+    private static final int ERROR_REG       = 0x06;
+    private static final int FIFO_DATA_REG   = 0x09; // the FIFO, in and out
+    private static final int FIFO_LEVEL_REG  = 0x0A; // bytes currently in it
+    private static final int BIT_FRAMING_REG = 0x0D; // TxLastBits + StartSend
+
+    private static final int PCD_IDLE       = 0x00; // "cancel / do nothing"
+    private static final int PCD_TRANSCEIVE = 0x0C; // "send the FIFO, receive"
+
+    // ---- CRC coprocessor ----
+    private static final int DIV_IRQ_REG      = 0x05; // CRCIrq is bit 2
+    private static final int CRC_RESULT_REG_L = 0x22;
+    private static final int CRC_RESULT_REG_H = 0x21;
+    private static final int PCD_CALCCRC      = 0x03;
+
+    // COMPOSITION again: the reader HAS-A driver. Note it does NOT extend
+    // Rc522Driver -- a reader is not a kind of driver, it USES one.
+    private final Rc522Driver driver;
+
+    public Rc522Reader(Rc522Driver driver) {
+        this.driver = driver;
+    }
+
+    @Override
+    protected byte[] transceive(byte[] sendData, int bitsInLastByte)
+            throws SpiException {
+
+        // ---- 1. how many bits are valid in the last byte ----
+        //   C: Write(BitFramingReg, 0x07);   // 7 for REQA
+        // TODO: writeRegister(BIT_FRAMING_REG, bitsInLastByte & 0x07);
+
+        // ---- 2. arm the chip and empty the FIFO ----
+        //   C: Write(CommIEnReg, 0x77|0x80);   // enable IRQs
+        //      ClearBitMask(CommIrqReg, 0x80); // clear old flags
+        //      SetBitMask(FIFOLevelReg, 0x80); // flush FIFO
+        //      Write(CommandReg, PCD_IDLE);    // cancel running command
+        // TODO: those four calls.
+
+        // ---- 3. load the outgoing bytes into the FIFO ----
+        // TODO: a loop writing each byte of sendData to FIFO_DATA_REG
+        //       (as an int: sendData[i] & 0xFF).
+
+        // ---- 4. run it, and press "start sending" ----
+        //   C: Write(CommandReg, PCD_TRANSCEIVE);
+        //      SetBitMask(BitFramingReg, 0x80);   // StartSend = bit 7
+        // TODO: those two.
+
+        // ---- 5. wait for the answer, or a timeout ----
+        //   The C spins a large counter. That does NOT port -- see the note
+        //   below. Use a WALL-CLOCK deadline:
+        //
+        //   long deadline = System.nanoTime() + 50_000_000L;   // ~50 ms
+        //   int irq;
+        //   do {
+        //       irq = driver.readRegister(COMM_IRQ_REG);
+        //   } while (System.nanoTime() < deadline
+        //            && (irq & 0x01) == 0      // TimerIRq -> nobody answered
+        //            && (irq & 0x30) == 0);    // RxIRq|IdleIRq -> done
+        // TODO: the loop. Keep 'irq' -- step 6 needs it.
+
+        // ---- 6. stop sending, then check for trouble ----
+        //   C: ClearBitMask(BitFramingReg, 0x80);
+        //      if (Read(ErrorReg) & 0x1B) ...   // overflow, parity, CRC, protocol
+        //   Also: if TimerIRq fired, nobody answered.
+        //   Either way return an EMPTY array -- "no card" is not an error.
+        // TODO.
+
+        // ---- 7. read the reply out of the FIFO ----
+        //   C: n = Read(FIFOLevelReg);
+        //      for (i=0;i<n;i++) backData[i] = Read(FIFODataReg);
+        // TODO: read the level into n, allocate byte[n], loop reading
+        //       FIFO_DATA_REG into each slot, return it.
+        //
+        //   Note: you read the SAME register n times. It is a FIFO -- each
+        //   read pops the next byte. This looks wrong and is right.
+        return new byte[0];
+    }
+
+    @Override
+    protected byte[] calculateCrc(byte[] data) throws SpiException {
+        //   C: Write(CommandReg, PCD_IDLE);
+        //      ClearBitMask(DivIrqReg, 0x04);   // clear CRCIrq
+        //      SetBitMask(FIFOLevelReg, 0x80);  // flush FIFO
+        //      for (i..) Write(FIFODataReg, data[i]);
+        //      Write(CommandReg, PCD_CALCCRC);
+        //      wait for DivIrqReg bit 2
+        //      out[0] = Read(CRCResultRegL);  out[1] = Read(CRCResultRegH);
+        //
+        // TODO all of it. Same wall-clock trick (~20 ms is plenty).
+        // Return { low, high }: ISO-14443 puts the CRC on the wire low byte
+        // first, and returning it wire-ready means callers just append it.
+        return new byte[2];
+    }
+}
+\end{jcode}
+
+\section{The two ports that do not survive translation}
+
+\begin{trap}{Iteration counts become deadlines}
+The single most important lesson in porting embedded C to Linux.
+
+\code{for (i = 0; i < 2000; i++)} on bare metal is microseconds. Here, each
+iteration is a \code{readRegister}, which is a syscall through the kernel --- on
+the order of 50\,\textmu s. The same loop count runs for \emph{minutes}.
+
+Always time out on \code{System.nanoTime()}, never on a loop counter. If your
+program appears to hang, this is the first thing to check.
+\end{trap}
+
+Second: \textbf{chip-select is no longer yours}. The C toggles CS around each
+byte. Your \code{SpiLink.transfer()} already performs one complete, atomic
+transaction. Try to manage CS yourself and you will fight the kernel driver and
+lose.
+
+\section{Verify on hardware}
+
+Before polling, the chip needs a full init sequence --- the datasheet defaults
+are not usable:
+
+\begin{jcode}
+private static void initChip(Rc522Driver driver) throws SpiException {
+    driver.writeRegister(0x2A, 0x8D); // TModeReg     } response timer,
+    driver.writeRegister(0x2B, 0x3E); // TPrescalerReg} ~300 ms at 6.78 MHz
+    driver.writeRegister(0x2C, 0x02); // TReloadRegH  } (0x0258 = 600 ticks)
+    driver.writeRegister(0x2D, 0x58); // TReloadRegL  }
+    driver.writeRegister(0x15, 0x40); // TxASKReg  -> force 100% ASK modulation
+    driver.writeRegister(0x11, 0x3D); // ModeReg   -> CRC preset 0x6363
+    driver.writeRegister(0x26, 0x08); // RFCfgReg  -> receiver gain
+    driver.antennaOn();
+}
+\end{jcode}
+
+Two of those matter enormously:
+
+\begin{itemize}
+  \item \reg{TxASKReg} $=$ \hex{0x40} forces 100\,\% ASK modulation, which
+        Type~A cards require. Without it the card never sees a valid signal, and
+        you get a silence that looks exactly like a wiring fault.
+  \item \reg{ModeReg} $=$ \hex{0x3D} sets the CRC preset to \hex{0x6363}, the
+        ISO-14443-A value. Wrong preset means every CRC you compute is wrong,
+        so every SELECT is rejected --- in Chapter~\ref{ch:activation}, not here,
+        which makes it maddening to trace.
+\end{itemize}
+
+\begin{jcode}
+Rc522Reader reader = new Rc522Reader(driver);
+System.out.println("Polling 15x (put a card on the antenna)...");
+int hits = 0;
+for (int i = 0; i < 15; i++) {
+    if (reader.isCardPresent()) hits++;
+    Thread.sleep(40);
+}
+System.out.printf("card detected in %d / 15 polls%n", hits);
+\end{jcode}
+
+\begin{verifybox}
+\begin{trace}
+card detected in 15 / 15 polls
+\end{trace}
+If you get \code{0/15} with a card sitting on the antenna, check the init
+sequence first --- especially those two registers --- then confirm the card is
+actually 13.56\,MHz.
+\end{verifybox}
+
+\section{Traps}
+
+\begin{traptable}
+Runs for minutes, no output & Ported the C's iteration counter. Use a \code{nanoTime} deadline. \\
+\code{0/15} polls, chip version fine & Missing \reg{TxASKReg}$=$\hex{0x40} or \reg{ModeReg}$=$\hex{0x3D}. \\
+Detects once, then never again & Only sending REQA. Halted cards need WUPA. \\
+Detection works about half the time & Wire length, or card not flat on the antenna. \\
+\code{NegativeArraySizeException} & FIFO level read before the reply arrived --- check the wait loop. \\
+\end{traptable}
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "M3: Iso14443Reader template method + Rc522Reader transceive/CRC"
+\end{shell}

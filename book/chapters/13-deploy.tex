@@ -1,0 +1,214 @@
+\chapter{Deploying to the Pi}
+\label{ch:deploy}
+
+\chapterbrief
+  {The machine boots into the kiosk: fullscreen, correctly rotated, GPU-accelerated, no keyboard attached.}
+  {Operational discipline --- the difference between a demo and a machine.}
+  {Something you can hang on a wall and walk away from.}
+
+\section{Rotating the display}
+
+A 7-inch panel mounted vertically needs the \emph{compositor} rotated, not the
+app. Raspberry Pi OS (Bookworm and later) uses \textbf{labwc} on Wayland.
+
+\code{\textasciitilde/.config/labwc/autostart}:
+
+\begin{shell}
+# 1024x600 panel mounted rotated -> the app sees a 600x1024 portrait screen.
+wlr-randr --output HDMI-A-1 --transform 90 &
+\end{shell}
+
+Check your output name with \code{wlr-randr}; it may be \code{HDMI-A-2}.
+
+\textbf{Touch must be rotated too}, and this is the step everyone forgets. An
+unrotated touchscreen on a rotated display gives inverted axes: you press the
+top-left tile and the bottom-right one activates. Maddening, and it looks like a
+UI bug.
+
+In \code{\textasciitilde/.config/labwc/rc.xml}, inside \code{<libinput>}:
+
+\begin{xcode}
+<device category="touch">
+  <transformationMatrix>0 -1 1 1 0 0</transformationMatrix>
+</device>
+\end{xcode}
+
+That matrix is a 90\textdegree{} rotation. For 270\textdegree{} use
+\code{0 1 0 -1 0 1}. If touch ends up mirrored rather than rotated, you have the
+wrong one.
+
+\begin{concept}{Why the app does not rotate itself}
+If JavaFX rendered rotated, every animation would run through a transform, the
+compositor would still composite unrotated, and touch would \emph{still} be
+wrong.
+
+Rotating at the compositor means everything below it --- including input --- is
+consistently transformed, and the app simply sees a portrait screen. Apply a
+transformation at the lowest layer that owns all the affected data.
+\end{concept}
+
+\section{GPU acceleration: the one flag that matters}
+
+JavaFX on a Pi will silently fall back to software rendering, and the difference
+is night and day: a fade that takes 16\,ms on the GPU takes 400\,ms on the CPU,
+and your kiosk feels broken.
+
+The cause is specific. The VideoCore VI driver reports \textbf{OpenGL 2.1}, and
+JavaFX's Prism pipeline checks for a higher version and refuses. The GPU is
+perfectly capable; the version check is wrong.
+
+\begin{shell}
+java -Dprism.forceGPU=true \
+     -Dprism.verbose=true \
+     -cp "target/classes:target/dependency/*" com.midnightbrewer.ui.MainApp
+\end{shell}
+
+\code{-Dprism.verbose=true} prints the chosen pipeline at startup. You want to
+see \code{es2} (hardware). If it says \code{sw}, you are on the CPU.
+
+Also worth setting in \code{/boot/firmware/config.txt}:
+
+\begin{shell}
+dtoverlay=vc4-kms-v3d
+gpu_mem=128
+\end{shell}
+
+\subsection{Other things that mattered on a Zero 2 W}
+
+\begin{itemize}
+  \item \textbf{Cache the pulse rings.} \code{ring.setCache(true);
+        ring.setCacheHint(CacheHint.SPEED);} Without it, JavaFX re-rasterises the
+        vector circle every frame while it scales. With it, you are scaling a
+        bitmap, which is nearly free.
+  \item \textbf{Hide the cursor} (\code{scene.setCursor(Cursor.NONE)}). Xwayland
+        parks a pointer mid-screen; it sits on a tile and leaves it stuck in
+        \code{:hover}, which reads as a pre-selected drink.
+  \item \textbf{Scope hover styling} to a \code{.desktop} CSS class you enable
+        only in windowed development mode. A touchscreen has no hover state to
+        represent.
+\end{itemize}
+
+\section{Autostart with systemd}
+
+\code{/etc/systemd/system/midnight-brewer.service}:
+
+\begin{shell}
+[Unit]
+Description=The Midnight Brewer kiosk
+After=graphical.target
+
+[Service]
+Type=simple
+User=martin
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+WorkingDirectory=/home/martin/midnight-brewer
+ExecStart=/usr/bin/java -Dprism.forceGPU=true \
+    -cp "target/classes:target/dependency/*" com.midnightbrewer.ui.MainApp
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target
+\end{shell}
+
+\begin{shell}
+sudo systemctl daemon-reload
+sudo systemctl enable --now midnight-brewer
+journalctl -u midnight-brewer -f      # watch it
+\end{shell}
+
+\begin{concept}{\texttt{Restart=always} is the important line}
+A kiosk that dies at three in the morning and stays dead is worse than one that
+restarts in five seconds.
+
+Combined with the broad \code{catch (RuntimeException)} from
+Chapter~\ref{ch:kiosk}, you have two layers of resilience: bad taps do not kill
+the worker thread, and a fatal crash does not kill the machine.
+
+Design for the failure you cannot foresee by making recovery automatic.
+\end{concept}
+
+Remember the group membership, or Pi4J cannot open the device:
+
+\begin{shell}
+sudo usermod -aG spi,gpio martin      # log out and back in
+\end{shell}
+
+\section{The deploy loop}
+
+Compiling on a Zero 2 W is slow enough to break your concentration. Two options.
+
+\textbf{Rsync the source, build on the Pi} (simple, about 40 seconds):
+
+\begin{shell}
+rsync -av --exclude target/ ./ martin@raspberrypi.local:~/midnight-brewer/
+ssh martin@raspberrypi.local 'cd ~/midnight-brewer && mvn -q -DskipTests compile'
+\end{shell}
+
+\textbf{Or build locally and ship the classes} (about 5 seconds). Java bytecode
+is architecture-independent, so a laptop build runs unchanged on ARM:
+
+\begin{shell}
+mvn -q -DskipTests compile
+rsync -av target/classes/ martin@raspberrypi.local:~/midnight-brewer/target/classes/
+\end{shell}
+
+Do the dependency copy \emph{once}:
+
+\begin{shell}
+ssh martin@raspberrypi.local \
+  'cd ~/midnight-brewer && mvn dependency:copy-dependencies -DincludeScope=runtime'
+\end{shell}
+
+\begin{trap}{Stale classes}
+If you change a file and the old \code{.class} survives, you will debug behaviour
+that no longer exists in your source.
+
+When something makes no sense \emph{at all} --- when the code in front of you
+cannot possibly produce the output you are seeing --- run \code{mvn clean
+compile} before anything else.
+\end{trap}
+
+\section{Field hygiene}
+
+Three habits that keep a kiosk healthy.
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[Power-cycle the RF field per transaction.] \code{softReset()} $+$
+        \code{antennaOn()} at the start of each tap puts any lingering card back
+        to IDLE. Without it, a card left on the antenna after one purchase is in
+        the wrong state for the next.
+  \item[Always close the link.] try-with-resources on \code{Pi4jSpiLink}, and
+        \code{close()} in the JavaFX \code{stop()} hook. An RF field left
+        energised overnight cooks the module.
+  \item[Never log key material.] It is tempting during debugging to print session
+        keys. If that line survives into production, your logs are now a key
+        store. Print the \emph{TI} and the \emph{counter} instead --- they tell
+        you everything you need for protocol debugging and nothing an attacker
+        wants.
+\end{description}
+
+\section{The finished machine}
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily, node distance=6mm,
+   b/.style={draw=brewernavy, rounded corners=2pt, minimum width=62mm,
+             minimum height=8mm, inner sep=3pt}]
+  \node[b] (boot) {boot $\rightarrow$ labwc (rotated) $\rightarrow$ systemd};
+  \node[b, below=of boot] (fx) {JavaFX kiosk (GPU accelerated)};
+  \node[b, below=of fx, draw=brewerblue, fill=brewerblue!8] (pt) {\code{PaymentTerminal}};
+  \node[b, below=of pt] (dpt) {\code{DesfirePaymentTerminal}};
+  \node[b, below=of dpt] (stack) {SPI $\rightarrow$ RC522 $\rightarrow$ ISO-DEP $\rightarrow$ DESFire};
+  \node[b, below=of stack, draw=brewergreen] (debit) {a real debit};
+  \foreach \a/\bb in {boot/fx, fx/pt, pt/dpt, dpt/stack, stack/debit}{
+    \draw[-{Stealth[length=4pt]}, brewergrey] (\a) -- (\bb);}
+\end{tikzpicture}
+\end{center}
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "deploy: rotation, GPU flag, systemd unit, deploy scripts"
+\end{shell}

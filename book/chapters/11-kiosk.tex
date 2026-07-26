@@ -1,0 +1,368 @@
+\chapter{The kiosk}
+\label{ch:kiosk}
+
+\chapterbrief
+  {A touchscreen that takes payments --- without a single line of crypto in the UI.}
+  {The Adapter pattern, and threading discipline.}
+  {Tap a drink, tap a card, watch it brew.}
+
+\section{The problem}
+
+You have a working payment stack. Now you need a screen. Two constraints make
+this harder than it looks:
+
+\begin{enumerate}
+  \item You want to build the UI \emph{before} the hardware works --- or at least
+        be able to develop it on a laptop with no reader attached.
+  \item Card operations take \emph{seconds} (polling, RF, crypto), and a UI that
+        blocks for seconds is a broken UI.
+\end{enumerate}
+
+\section{The idea: one interface, two implementations}
+
+Define what the UI needs in the smallest possible terms, then satisfy it twice.
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,
+   b/.style={draw=brewernavy, rounded corners=2pt, inner sep=5pt,
+             minimum width=42mm, minimum height=8mm},
+   i/.style={draw=brewerblue, fill=brewerblue!8, rounded corners=2pt,
+             inner sep=5pt, minimum width=42mm, minimum height=8mm}]
+  \node[b] (ui) {JavaFX UI};
+  \node[i, below=9mm of ui] (if) {\code{PaymentTerminal}};
+  \node[b, below left=13mm and 6mm of if] (sim) {\code{SimulatedPaymentTerminal}};
+  \node[b, below right=13mm and 6mm of if] (real) {\code{DesfirePaymentTerminal}};
+  \draw[-{Stealth[length=4pt]}, brewernavy] (ui) --
+       node[right, font=\scriptsize\itshape, color=brewergrey] {depends only on} (if);
+  \draw[-{Stealth[length=4pt]}, dashed, brewergrey] (sim) -- (if);
+  \draw[-{Stealth[length=4pt]}, dashed, brewergrey] (real) -- (if);
+  \node[font=\scriptsize\itshape, color=brewergrey, below=1mm of sim] {laptop, no hardware};
+  \node[font=\scriptsize\itshape, color=brewergrey, below=1mm of real, align=center]
+       {your whole card stack};
+\end{tikzpicture}
+\end{center}
+
+The same seam idea as \code{SpiLink} and \code{ApduChannel}, now at the top of
+the stack. It means the entire UI can be built and tested before a single card
+exists, and the kiosk degrades gracefully: no reader attached, so use the
+simulator, and the app still runs.
+
+\section{The contract}
+
+\begin{jcode}
+package com.midnightbrewer.payment;
+
+/**
+ * The seam between the kiosk UI and whatever actually takes the money.
+ *
+ * The UI depends only on this type, so it neither knows nor cares whether
+ * payment is a simulated wallet or a real DESFire being debited over SPI.
+ *
+ * Extends AutoCloseable so the RF field is always powered down, even on a
+ * crash.
+ */
+public interface PaymentTerminal extends AutoCloseable {
+
+    /**
+     * Begin waiting for a card and charge it for drink.
+     *
+     * MUST return immediately -- all polling happens on a background thread.
+     * Exactly one terminal callback (approved or declined) is delivered per
+     * call, unless cancel() intervenes.
+     */
+    void startTransaction(Drink drink, PaymentListener listener);
+
+    /** Abort the in-flight transaction. Safe to call when nothing is running. */
+    void cancel();
+
+    /** Human-readable state for the status pill, e.g. "RC522 READY". */
+    String getStatusText();
+
+    @Override
+    void close();
+}
+\end{jcode}
+
+\begin{jcode}
+public interface PaymentListener {
+    /** A card entered the field. Not yet authenticated. */
+    void onCardDetected(String uid);
+    /** Authenticated and balance read, before any debit. */
+    void onBalanceRead(int balanceCents);
+    /** Debit COMMITTED. The drink may now be dispensed. */
+    void onApproved(PaymentReceipt receipt);
+    /** Failed. The card was not charged, or the debit was rolled back. */
+    void onDeclined(CardException cause);
+}
+\end{jcode}
+
+\begin{concept}{Why callbacks, and why four of them}
+\textbf{Why not a return value?} Because \code{startTransaction} returns
+instantly and the result arrives seconds later. A blocking \code{boolean
+pay(Drink)} would freeze the UI thread: the animation stops, touches queue up,
+and the operating system offers to kill your app.
+
+\textbf{Why four callbacks?} So the UI can narrate. ``Card detected\ldots'' then
+``Balance \texteuro5.00, charging\ldots'' then approved. A payment terminal that
+shows nothing for four seconds feels broken even when it is working perfectly.
+\end{concept}
+
+\section{The Adapter}
+\index{Adapter pattern}
+
+Now the interesting class: something that satisfies \code{PaymentTerminal} by
+driving the stack you built in Parts~II--IV.
+
+\begin{analogy}{The travel plug adapter}
+Your laptop charger has one plug shape; the Italian wall has another. The adapter
+does not generate electricity or modify the laptop --- it sits between two fixed
+interfaces and translates.
+
+Both sides were designed without knowledge of each other, and the adapter makes
+them fit. Here the kiosk speaks \code{PaymentTerminal} and \code{CardException};
+your stack speaks \code{Rc522Reader}, \code{DesfireCard} and
+\code{SpiException}. \code{DesfirePaymentTerminal} translates --- including the
+exceptions, so a \code{com.midnightbrewer.hardware} type never leaks into the UI.
+\end{analogy}
+
+\begin{jcode}
+package com.midnightbrewer.payment;
+
+public class DesfirePaymentTerminal implements PaymentTerminal {
+
+    // How the card was personalised (Chapter 12 / Appendix A).
+    private static final byte[] APP_AID       = { 0x03, 0x02, 0x01 };
+    private static final byte   USER_KEY_NO   = 0x02;
+    private static final byte   VALUE_FILE_NO = 0x01;
+
+    private final Pi4jSpiLink link;
+    private final Rc522Driver driver;
+    private final Rc522Reader reader;
+
+    // ONE background thread, created once. Transactions are strictly
+    // sequential -- two overlapping card conversations would interleave
+    // command counters and corrupt both.
+    private final ExecutorService worker =
+            Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "desfire-terminal");
+                t.setDaemon(true);      // never blocks JVM shutdown
+                return t;
+            });
+
+    /** Written by the UI thread, read by the worker. */
+    private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    private volatile boolean scanning = false;
+
+    /** Opens the reader. THROWS if there is no RC522 -- see createTerminal(). */
+    public DesfirePaymentTerminal() throws SpiException {
+        this.link = new Pi4jSpiLink();
+        this.driver = new Rc522Driver(link);
+        try {
+            initReader();
+            int version = driver.version();
+            if (version != 0x91 && version != 0x92) {
+                throw new SpiException("RC522 not responding");
+            }
+        } catch (SpiException e) {
+            quietClose();               // do not leak SPI on a failed construction
+            throw e;
+        }
+        this.reader = new Rc522Reader(driver);
+    }
+
+    @Override
+    public void startTransaction(Drink drink, PaymentListener listener) {
+        cancelled.set(false);
+        worker.submit(() -> runTransaction(drink, listener));   // returns instantly
+    }
+
+    private void runTransaction(Drink drink, PaymentListener listener) {
+        scanning = true;
+        try {
+            // Fresh reader state each tap: softReset + antennaOn power-cycles
+            // the field so the card is IDLE again and activate() runs cleanly
+            // even after a previous purchase.
+            initReader();
+
+            if (!waitForCard()) return;         // cancelled; the UI moved on
+
+            ActivatedCard card = reader.activate();
+            listener.onCardDetected(card.uidHex());
+
+            DesfireCard desfire = new DesfireCard(
+                    new IsoDepChannel(reader), RandomSource.secure());
+            desfire.selectApplication(APP_AID);
+            desfire.authenticateEv2First(USER_KEY_NO, userKey());
+
+            int balance = desfire.getValue(VALUE_FILE_NO);
+            listener.onBalanceRead(balance);
+
+            int price = drink.getPriceCents();
+            if (balance < price) {
+                listener.onDeclined(new InsufficientFundsException(balance, price));
+                return;
+            }
+
+            // Provisional until the commit is acknowledged; only THEN may we
+            // hand out a receipt, and only then may the UI dispense.
+            desfire.debit(VALUE_FILE_NO, price);
+            desfire.commitTransaction();
+            int after = desfire.getValue(VALUE_FILE_NO);
+
+            listener.onApproved(
+                new PaymentReceipt(card.uidHex(), drink, balance, after));
+
+        } catch (SpiException e) {
+            listener.onDeclined(translate(e));  // stack vocabulary -> UI vocabulary
+        } catch (RuntimeException e) {
+            listener.onDeclined(new CardCommunicationException(
+                    "unexpected reader error: " + e.getMessage(), e));
+        } finally {
+            scanning = false;
+        }
+    }
+
+    private boolean waitForCard() throws SpiException {
+        while (!cancelled.get()) {
+            if (reader.isCardPresent()) return true;
+            sleep(30);
+        }
+        return false;
+    }
+}
+\end{jcode}
+
+\begin{concept}{\texttt{catch (RuntimeException)} is not paranoia}
+A kiosk must never die on a bad tap. \code{SpiException} covers expected
+failures; the \code{RuntimeException} catch covers the unexpected --- an array
+index, a null, a Pi4J internal error.
+
+Without it, one odd card kills the worker thread and the machine stops taking
+payments until someone reboots it.
+
+\textbf{At a process boundary, catch broadly and report. Inside your logic, catch
+narrowly.}
+\end{concept}
+
+\section{Threading: the rule you must not break}
+
+JavaFX has exactly one thread allowed to touch the UI. Your terminal calls back
+from a \emph{different} thread. So every callback hops:
+
+\begin{jcode}
+private final class UiPaymentListener implements PaymentListener {
+
+    @Override
+    public void onCardDetected(String uid) {
+        Platform.runLater(() ->
+            paymentHintLabel.setText("Card detected -- authenticating..."));
+    }
+
+    @Override
+    public void onApproved(PaymentReceipt receipt) {
+        Platform.runLater(() -> { stopPulse(); startBrewing(receipt); });
+    }
+}
+\end{jcode}
+
+\begin{trap}{Off-thread UI access does not reliably throw}
+Sometimes it works. Sometimes it corrupts rendering in ways that appear once an
+hour, on the real panel only, and never under a debugger.
+
+This is one of the nastiest bug classes in UI programming, and the fix is a
+habit, not a diagnosis: \textbf{every callback that touches the scene graph is
+wrapped in \code{Platform.runLater}.} No exceptions.
+
+The same rule exists everywhere: Android has \code{runOnUiThread}, Swing has
+\code{invokeLater}, Qt has queued connections. One thread owns the widgets.
+\end{trap}
+
+\section{Choosing the backend}
+
+The whole design collapses into one method:
+
+\begin{jcode}
+private PaymentTerminal createTerminal() {
+    if ("simulated".equalsIgnoreCase(System.getProperty("brewer.reader", ""))) {
+        return new SimulatedPaymentTerminal();          // forced, for UI work
+    }
+    try {
+        PaymentTerminal real = new DesfirePaymentTerminal();
+        System.out.println("[UI] RC522 ready -- real card payment enabled");
+        return real;
+    } catch (Exception e) {
+        System.out.println("[UI] no RC522 (" + e.getMessage()
+                + ") -- using the simulator");
+        return new SimulatedPaymentTerminal();
+    }
+}
+\end{jcode}
+
+\textbf{Detection by attempting to open.} On a laptop, constructing
+\code{Pi4jSpiLink} throws and you fall back. The same build runs everywhere: no
+flags, no config file, no \code{\#ifdef}. This is precisely why the constructor
+\emph{must} throw rather than returning a half-built object.
+
+And because everything above depends on the interface, the UI needs
+\textbf{zero} changes to switch backends. The bench ``simulate tap'' button even
+hides itself:
+
+\begin{jcode}
+devTapButton.setVisible(terminal instanceof SimulatedPaymentTerminal);
+\end{jcode}
+
+\section{Verify}
+
+\textbf{On a laptop} (no hardware): \code{mvn javafx:run -Dbrewer.windowed=true}.
+The simulator's tap button drives the whole flow.
+
+\textbf{On the Pi}, run a headless smoke test first --- it exercises the exact
+path a tap takes, minus the screen:
+
+\begin{jcode}
+public final class TerminalCheck {
+    public static void main(String[] args) throws Exception {
+        Drink testDrink = new Drink("test", "Test Shot", 10);   // 10 cents
+        try (DesfirePaymentTerminal terminal = new DesfirePaymentTerminal()) {
+            CountDownLatch done = new CountDownLatch(1);
+            terminal.startTransaction(testDrink, new PaymentListener() {
+                public void onCardDetected(String uid)   { print("card: " + uid); }
+                public void onBalanceRead(int cents)     { print("balance: " + cents); }
+                public void onApproved(PaymentReceipt r) { print("APPROVED"); done.countDown(); }
+                public void onDeclined(CardException e)  { print("DECLINED"); done.countDown(); }
+            });
+            System.out.println("Tap a card...");
+            done.await();
+        }
+    }
+}
+\end{jcode}
+
+\code{CountDownLatch} is how \code{main} waits for a background thread: start at
+one, block on \code{await()}, and the callback counts down to zero to release it.
+
+\begin{verifybox}
+\begin{trace}
+  card: 04 76 18 62 7B 20 90
+  balance: $5.00
+  APPROVED: charged $0.10  ($5.00 -> $4.90)
+\end{trace}
+\end{verifybox}
+
+\section{Traps}
+
+\begin{traptable}
+UI freezes on tap & Card work on the FX thread. It must be on the worker. \\
+Random rendering corruption & A callback touching nodes without \code{Platform.runLater}. \\
+Second tap always fails & Reader not re-initialised per transaction. \\
+Kiosk dies on an odd card & Missing the broad \code{RuntimeException} catch. \\
+Simulator used on the Pi & Constructor threw --- read the printed message, it names the cause. \\
+Drink dispensed but card not charged & Dispensing on \code{debit} instead of after \code{commitTransaction}. \\
+\end{traptable}
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "kiosk: PaymentTerminal seam + DesfirePaymentTerminal adapter"
+\end{shell}

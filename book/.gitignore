@@ -1,0 +1,21 @@
+# LaTeX build artefacts
+*.aux
+*.log
+*.out
+*.toc
+*.idx
+*.ilg
+*.ind
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.run.xml
+*.lof
+*.lot
+.DS_Store
+
+# The PDF IS committed -- it is the deliverable, and most readers will not
+# have a TeX Live install. Remove this line if you would rather they build it.
+!brewer-book.pdf

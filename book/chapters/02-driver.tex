@@ -1,0 +1,340 @@
+\chapter{The RC522 driver}
+\label{ch:driver}
+
+\chapterbrief
+  {Turn ``shift bytes over SPI'' into ``read and write named registers''.}
+  {Encapsulation, and composition (HAS-A).}
+  {A real chip reporting \code{version() == 0x92}.}
+
+\section{The problem}
+
+Reading one RC522 register over raw SPI looks like this:
+
+\begin{jcode}
+byte[] tx = { (byte) (((0x37 << 1) & 0x7E) | 0x80), 0x00 };
+byte[] rx = new byte[2];
+link.transfer(tx, rx, 2);
+int version = rx[1] & 0xFF;
+\end{jcode}
+
+Five lines, three magic numbers, and a bit-twiddle you must get exactly right.
+Now picture that at every one of the roughly forty register accesses in a card
+transaction: two hundred lines of identical incantation, each an opportunity to
+type \hex{0x7F} where you meant \hex{0x7E}.
+
+\section{The idea: gather the mess in one place}
+\index{encapsulation}
+
+That is what a class is, at its most useful: \textbf{a place to put the mess so
+the rest of the program does not have to know about it.} After this chapter the
+rest of your program says
+
+\begin{jcode}
+int version = driver.version();
+driver.antennaOn();
+\end{jcode}
+
+and the address encoding exists in exactly one place, written once, correct once.
+
+\begin{analogy}{The steering wheel}
+A car's steering wheel is an interface to a mess: a rack, a pinion, hydraulic
+assist, tie rods, geometry that changes with speed. You turn a wheel.
+
+You are not permitted to reach into the steering column mid-corner and adjust
+the rack --- not because it is secret, but because the mechanism only works if it
+is driven through the one sanctioned control.
+
+\code{private} is that housing. It is not about hiding secrets; it is about
+\textbf{guaranteeing that the only way to affect this thing is through the paths
+you have thought about.}
+\end{analogy}
+
+\subsection{The address encoding}
+
+From the MFRC522 datasheet, the first SPI byte is an address byte:
+
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize\sffamily, x=9.5mm, y=7mm]
+  \foreach \i/\lbl in {0/7, 1/6, 2/5, 3/4, 4/3, 5/2, 6/1, 7/0}{
+     \draw[draw=brewergrey] (\i,0) rectangle ++(1,1);
+     \node[color=brewergrey, font=\tiny] at (\i+0.5, 1.28) {bit \lbl};
+  }
+  % RW bit
+  \fill[brewerblue!16] (0,0) rectangle ++(1,1);
+  \node at (0.5,0.5) {R/W};
+  % address bits
+  \fill[breweramber!16] (1,0) rectangle ++(6,1);
+  \node at (4,0.5) {6-bit register address};
+  % low bit
+  \fill[black!7] (7,0) rectangle ++(1,1);
+  \node at (7.5,0.5) {0};
+  \draw[decorate, decoration={brace, amplitude=4pt, mirror}, brewergrey]
+       (1,-0.12) -- (7,-0.12);
+  \node[color=brewergrey, font=\tiny] at (4,-0.62) {\code{(addr << 1) \& 0x7E}};
+  \draw[decorate, decoration={brace, amplitude=4pt, mirror}, brewergrey]
+       (0,-0.12) -- (1,-0.12);
+  \node[color=brewergrey, font=\tiny, align=center] at (0.5,-0.72) {1 = read\\0 = write};
+\end{tikzpicture}
+\end{center}
+
+A register number must be shifted left one place to land in bits 6--1:
+
+\begin{jcode}
+((register << 1) & 0x7E) | 0x80    // read
+ (register << 1) & 0x7E            // write
+\end{jcode}
+
+\code{\& 0x7E} is \code{0111 1110}: it masks off anything that overflowed past
+bit 6 and forces bit 0 to zero. \code{| 0x80} sets the read flag. That is the
+whole protocol, and after this chapter you never write it again.
+
+\section{Build it}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+/**
+ * The RC522 register-level driver.
+ *
+ * Encapsulation earns its keep here: the address encoding, the read/write bit
+ * and the two-byte SPI dance all live IN HERE. The rest of the program calls
+ * readRegister(0x37) and never writes ((reg << 1) & 0x7E) | 0x80 again.
+ */
+public class Rc522Driver {
+
+    // ---- register addresses (MFRC522 datasheet, section 9) ----
+    private static final int COMMAND_REG    = 0x01;  // CommandReg
+    private static final int TX_CONTROL_REG = 0x14;  // TxControlReg (antenna)
+    private static final int VERSION_REG    = 0x37;  // VersionReg (0x91 / 0x92)
+
+    private static final int PCD_SOFT_RESET = 0x0F;  // the SoftReset command
+
+    // ---- composition: the driver HAS-A SpiLink ----
+    //
+    // 'private' = nobody outside can reach past the driver and touch the bus.
+    // 'final'   = once set in the constructor, this never points elsewhere.
+    // The type is the INTERFACE, so the driver cannot tell real from fake.
+    private final SpiLink link;
+
+    // Dependency injection: the bus is handed in, not constructed here.
+    public Rc522Driver(SpiLink link) {
+        this.link = link;
+    }
+
+    // =================================================================
+    // readRegister
+    //
+    //   C:  uchar Read_MFRC522(uchar addr) {
+    //           SPI_Transfer( ((addr<<1)&0x7E) | 0x80 );  // address, read bit
+    //           val = SPI_Transfer(0x00);                 // 2nd byte = answer
+    //           return val;
+    //       }
+    //
+    //   In Java ONE transfer() moves both bytes: build a 2-byte tx (encoded
+    //   address, then 0x00), a 2-byte rx, call link.transfer, answer in rx[1].
+    //   Return it masked with & 0xFF so 0x92 comes back as 146, not -110.
+    // =================================================================
+    public int readRegister(int register) throws SpiException {
+        // TODO
+        return 0;
+    }
+
+    // =================================================================
+    // writeRegister
+    //
+    //   Same shape, two differences: the address byte does NOT set 0x80
+    //   (that is what makes it a write), and the second byte is the value
+    //   instead of 0x00. Nothing to read back.
+    // =================================================================
+    public void writeRegister(int register, int value) throws SpiException {
+        // TODO
+    }
+
+    // =================================================================
+    // setBitMask -- turn bits ON without disturbing the others.
+    //
+    //   C:  tmp = Read(reg);  Write(reg, tmp | mask);
+    //
+    //   "Read-modify-write". Build it from the two methods you just wrote,
+    //   NOT from link.transfer. Each layer uses only the layer below it.
+    // =================================================================
+    public void setBitMask(int register, int mask) throws SpiException {
+        // TODO
+    }
+
+    /** Turn bits OFF: same shape, but AND with ~mask. */
+    public void clearBitMask(int register, int mask) throws SpiException {
+        // TODO
+    }
+
+    /** Write the SoftReset command to CommandReg. One line. */
+    public void softReset() throws SpiException {
+        // TODO
+    }
+
+    // =================================================================
+    // antennaOn -- power up the RF field.
+    //
+    //   C:  Read_MFRC522(TxControlReg);      // the C reads and ignores it
+    //       SetBitMask(TxControlReg, 0x03);  // Tx1RFEn | Tx2RFEn
+    //
+    //   The two low bits of TxControlReg are the antenna drivers. Watch the
+    //   register go 0x80 -> 0x83; that is read-modify-write doing its job.
+    // =================================================================
+    public void antennaOn() throws SpiException {
+        // TODO
+    }
+
+    /** The chip's version byte: 0x91 (v1.0) or 0x92 (v2.0). */
+    public int version() throws SpiException {
+        // TODO
+        return 0;
+    }
+}
+\end{jcode}
+
+\begin{concept}{Each layer uses only the layer beneath it}
+\code{setBitMask} could call \code{link.transfer} directly and it would work.
+Do not.
+
+If you shortcut a layer you have created a second path to the same hardware ---
+and the day you need to add logging, retries, or a mutex to register access, one
+path gets it and the other silently does not. That is not a hypothetical; it is
+precisely how ``I fixed the bug but it still happens sometimes'' bugs are born.
+\end{concept}
+
+\section{Verify --- with no hardware}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class Rc522DriverTest {
+
+    @Test
+    void readsTheVersionRegister() throws SpiException {
+        FakeSpiLink link = new FakeSpiLink();
+        link.setRegister(0x37, 0x92);
+
+        Rc522Driver driver = new Rc522Driver(link);
+
+        assertEquals(0x92, driver.version());
+    }
+
+    @Test
+    void writeEncodesTheAddressWithoutTheReadBit() throws SpiException {
+        FakeSpiLink link = new FakeSpiLink();
+        Rc522Driver driver = new Rc522Driver(link);
+
+        driver.writeRegister(0x14, 0x03);
+
+        byte[] tx = link.sent.get(0);
+        assertEquals((0x14 << 1) & 0x7E, tx[0] & 0xFF);   // read bit CLEAR
+        assertEquals(0x03, tx[1] & 0xFF);
+    }
+}
+\end{jcode}
+
+The second test is the interesting one: it asserts on \textbf{what went out on
+the wire}, which is the only way to catch an encoding bug. A test that checked
+only return values would happily pass with the read bit set on a write.
+
+\begin{verifybox}
+\begin{shell}
+mvn test -Dtest=Rc522DriverTest
+\end{shell}
+\end{verifybox}
+
+\section{Now the real chip}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+public final class HardwareCheck {
+
+    private HardwareCheck() { }
+
+    public static void main(String[] args) throws Exception {
+        System.out.println("Opening the reader...");
+
+        try (Pi4jSpiLink link = new Pi4jSpiLink()) {
+            Rc522Driver driver = new Rc522Driver(link);
+
+            driver.softReset();
+            Thread.sleep(50);              // the chip needs a moment after reset
+            driver.antennaOn();
+
+            int version = driver.version();
+            System.out.printf("version() = 0x%02X%n", version);
+            if (version == 0x91 || version == 0x92) {
+                System.out.println("  -> the driver works on silicon.");
+            } else {
+                System.out.println("  -> chip not answering. Check wiring/power.");
+            }
+        }
+    }
+}
+\end{jcode}
+
+\begin{shell}
+# on your laptop
+rsync -av --exclude target/ ./ martin@raspberrypi.local:~/midnight-brewer/
+
+# on the Pi
+cd ~/midnight-brewer
+mvn -q -DskipTests compile dependency:copy-dependencies -DincludeScope=runtime
+java -cp "target/classes:target/dependency/*" \
+     com.midnightbrewer.hardware.HardwareCheck
+\end{shell}
+
+\begin{verifybox}
+\begin{trace}
+version() = 0x92
+  -> the driver works on silicon.
+\end{trace}
+\end{verifybox}
+
+\subsection{If you get \texttt{0x00} or \texttt{0xFF}}
+
+Those are the two ``nobody home'' values, and they are diagnostic:
+
+\begin{itemize}
+  \item \hex{0x00} --- MISO stuck low. Usually MISO not connected, chip
+        unpowered, or CS on the wrong pin.
+  \item \hex{0xFF} --- MISO stuck high, i.e.\ floating. Usually MISO connected
+        to nothing, or a dead chip.
+\end{itemize}
+
+Check power first (3.3\,V, \emph{not} 5\,V), then wiring, then shorten your
+wires. Do not debug the code: it is ten lines and your test already proved it.
+
+\begin{deeper}{try-with-resources, and why \texttt{AutoCloseable} mattered}
+\code{try (Pi4jSpiLink link = ...)} calls \code{close()} when the block exits ---
+normally, by exception, or by early return. That is why \code{SpiLink extends
+AutoCloseable} back in Chapter~\ref{ch:spi}.
+
+On a kiosk it means a crash can never leave the RF field energised, which is
+the sort of thing that quietly cooks a reader module overnight. Resource cleanup
+that depends on remembering to write it is resource cleanup that eventually does
+not happen.
+\end{deeper}
+
+\section{Traps}
+
+\begin{traptable}
+\code{version()} $= -110$ & Missing \code{\& 0xFF}. \\
+\code{version()} $=$ \hex{0x00} & MISO low: power, wiring, or wrong CS pin. \\
+\code{version()} $=$ \hex{0xFF} & MISO floating: not connected. \\
+Reads work, writes do not & Read bit \hex{0x80} accidentally set on writes. \\
+Fine on the bench, flaky when mounted & Wire length. Shorten them. \\
+\hex{0x92} in the test, \hex{0x00} on the Pi & Stale \code{target/}. Run \code{mvn clean compile}. \\
+\end{traptable}
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "M2: Rc522Driver -- register read/write, bitmasks, reset, antenna"
+\end{shell}

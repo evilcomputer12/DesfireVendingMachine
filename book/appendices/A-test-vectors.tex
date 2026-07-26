@@ -1,0 +1,267 @@
+\chapter{Test vectors}
+\label{app:vectors}
+
+Everything you need to verify the cryptography offline, in one place. All values
+are hexadecimal, lowercase, unspaced.
+
+\begin{concept}{Why these are trustworthy}
+They were generated with Python's \code{cryptography} library, deliberately
+\emph{not} with the Java you are writing. Agreement therefore means your
+implementation is \textbf{correct}, not merely self-consistent.
+
+Regenerate or extend them with \code{tools/m7d\_vectors.py} in the companion
+repository.
+\end{concept}
+
+\section{AES-CMAC --- RFC 4493 (Chapter~\ref{ch:cmac})}
+
+\textbf{Key} $K = $ \hex{2b7e151628aed2a6abf7158809cf4f3c}
+
+Subkeys:
+\begin{trace}
+K1 = fbeed618357133667c85e08f7236a8de
+K2 = f7ddac306ae266ccf90bc11ee46d513b
+\end{trace}
+
+\begin{center}\small
+\begin{tabular}{@{}cL{0.40\linewidth}L{0.40\linewidth}@{}}
+\toprule
+\thead{\#} & \thead{Message} & \thead{CMAC} \\
+\midrule
+1 & \emph{(empty)} & \hex{bb1d6929e95937287fa37d129b756746} \\
+2 & \hex{6bc1bee22e409f96e93d7e117393172a} & \hex{070a16b46b4d4144f79bdd9dd04a287c} \\
+3 & \hex{6bc1bee22e409f96e93d7e117393172a}\newline
+    \hex{ae2d8a571e03ac9c9eb76fac45af8e51}\newline
+    \hex{30c81c46a35ce411} & \hex{dfa66747de9ae63030ca32611497c827} \\
+4 & message 3 $+$ \hex{e5fbc1191a0a52ef}\newline
+    \hex{f69f2445df4f9b17ad2b417be66c3710} & \hex{51f0bebf7e3b9d92fc49741779363cfe} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The four cases cover every branch: empty (pad, $K_2$), one full block ($K_1$),
+partial last block (pad, $K_2$), and multiple full blocks ($K_1$).
+
+\section{The reference session (Chapters~\ref{ch:sesskeys}--\ref{ch:secmsg})}
+
+Every vector below derives from these three inputs. They are chained
+deliberately: the same session runs through key derivation, the authentication
+replay, and secure messaging, so a failure anywhere points at one specific step.
+
+\begin{trace}
+authKey = 00112233445566778899aabbccddeeff
+rndA    = a0a1a2a3a4a5a6a7a8a9aaabacadaeaf     (pin this in tests)
+rndB    = b0b1b2b3b4b5b6b7b8b9babbbcbdbebf
+\end{trace}
+
+\subsection{Session keys}
+
+\begin{trace}
+Kenc = d46c03528ecd3b1f1148e708d3e9729d      (label 0xA5)
+Kmac = 116d156cc502da820eb57915f189ec74      (label 0x5A)
+\end{trace}
+
+\subsection{Byte rotation}
+
+\begin{trace}
+rotateLeft(b0b1b2b3b4b5b6b7b8b9babbbcbdbebf)
+         = b1b2b3b4b5b6b7b8b9babbbcbdbebfb0
+\end{trace}
+
+\section{The authentication replay (Chapter~\ref{ch:auth})}
+
+A complete \code{AuthenticateEV2First} exchange with \code{rndA} pinned. All AES
+uses an \textbf{all-zero IV}.
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.36\linewidth}L{0.54\linewidth}@{}}
+\toprule
+\thead{Direction} & \thead{Bytes} \\
+\midrule
+card $\rightarrow$ you, step 1 \newline $E(K, RndB)$ &
+  \hex{eab6822fe368d5bc9895fb2558b38dde} \\
+you $\rightarrow$ card, step 2 \newline $E(K, RndA \| RndB')$ &
+  \hex{cf086a82c0b745a749daabb28a7a8db3}\newline
+  \hex{32272f9e5fdc37a4746064f25b7c2ca7} \\
+card $\rightarrow$ you, step 2 \newline $E(K, TI \| RndA' \| caps)$ &
+  \hex{4e08e447d74810052caa1c5b6c60343f}\newline
+  \hex{51f6e901ad171e677b100d3a34c925e4} \\
+$\rightarrow$ extracted TI & \hex{11223344} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{trap}{Fake replies must carry their status word}
+Your card code strips the last two bytes off every response, so a fake that
+omits them chops real ciphertext.
+
+\begin{trace}
+step-1 reply = eab6822fe368d5bc9895fb2558b38dde + 91af
+step-2 reply = 4e08e447d74810052caa1c5b6c60343f
+               51f6e901ad171e677b100d3a34c925e4 + 9100
+select reply = 9100
+\end{trace}
+\end{trap}
+
+\textbf{Cross-check.} Decrypting \hex{eab6822f...} with \code{authKey} and a zero
+IV must yield exactly \hex{b0b1b2b3b4b5b6b7b8b9babbbcbdbebf}. If it does, your
+authentication vectors and your session-key vectors are consistent with each
+other.
+
+\section{Secure messaging (Chapter~\ref{ch:secmsg})}
+
+Session as above, with \textbf{TI $=$ \hex{11223344}}.
+
+\subsection{The MAC layer}
+
+\begin{trace}
+truncateMac(00112233445566778899aabbccddeeff) = 1133557799bbddff
+\end{trace}
+(literally the odd-indexed bytes --- verifiable by eye)
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.30\linewidth}cL{0.26\linewidth}L{0.26\linewidth}@{}}
+\toprule
+\thead{Call} & \thead{ctr} & \thead{MAC input} & \thead{Result} \\
+\midrule
+\code{commandMac(0x6C, \{01\})} & 0 & \hex{6c00001122334401} & \hex{4d131ee17b482b16} \\
+\code{responseMac(\{\})}        & 1 & \hex{00010011223344}   & \hex{6b082e8062d1a89d} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{The crypto layer}
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.38\linewidth}cL{0.44\linewidth}@{}}
+\toprule
+\thead{Call} & \thead{ctr} & \thead{Result} \\
+\midrule
+\code{commandIv()}  & 0 & \hex{dd42134cd6970980d22066cb00ab1b16} \\
+\code{responseIv()} & 1 & \hex{cb73ae774aafd81868062906135969b9} \\
+\code{padIso7816(96000000)} & --- & \hex{96000000800000000000000000000000} \\
+\code{encryptCommandData(150)} & 0 & \hex{a2eb8f000bf3ddfe6e18e8859b284591} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\hex{96 00 00 00} is 150 little-endian, a \texteuro1.50 amount.
+
+\subsection{GetValue (balance 1000 cents)}
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.34\linewidth}cL{0.48\linewidth}@{}}
+\toprule
+\thead{Item} & \thead{ctr} & \thead{Bytes} \\
+\midrule
+card's encrypted payload & 1 & \hex{7950692fc2f01e72b3cee290f7122b5c} \\
+card's response MAC      & 1 & \hex{a44a7f2359b2f512} \\
+decrypts to              &   & \hex{e8030000} $+$ \hex{80} padding $\rightarrow$ \textbf{1000} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Full fake reply:
+\hex{7950692fc2f01e72b3cee290f7122b5c} $+$ \hex{a44a7f2359b2f512} $+$ \hex{9100}
+
+\subsection{Debit 150 cents, then Commit}
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.34\linewidth}cL{0.48\linewidth}@{}}
+\toprule
+\thead{Item} & \thead{ctr} & \thead{Bytes} \\
+\midrule
+debit ciphertext           & 0 & \hex{a2eb8f000bf3ddfe6e18e8859b284591} \\
+debit command MAC input    & 0 & \hex{dc00001122334401a2eb8f000b}\newline\hex{f3ddfe6e18e8859b284591} \\
+debit command MAC          & 0 & \hex{27e5ea2cb8acad7d} \\
+\textbf{debit APDU data}   & 0 & \hex{01a2eb8f000bf3ddfe6e18e885}\newline\hex{9b28459127e5ea2cb8acad7d} \\
+debit response MAC         & 1 & \hex{6b082e8062d1a89d} \\
+commit command MAC input   & 1 & \hex{c7010011223344} \\
+commit command MAC         & 1 & \hex{4dc9859e1a783ee0} \\
+commit response MAC        & 2 & \hex{febea1fcb55208ba} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Watch the counter walk $0 \rightarrow 1 \rightarrow 2$. That progression
+\emph{is} the increment-ordering rule made visible.
+
+\section{Card personalisation}
+
+The values the kiosk and the top-up app must agree on. Change them anywhere and
+you must change them everywhere.
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.30\linewidth}L{0.28\linewidth}L{0.32\linewidth}@{}}
+\toprule
+\thead{Setting} & \thead{Value} & \thead{Notes} \\
+\midrule
+Application ID       & \hex{0x010203}   & on the wire \hex{03 02 01} (\textbf{LSB-first}) \\
+App master key no.   & 0 & \\
+App \textbf{user} key no. & \textbf{2} & everyday operations \\
+Value file no.       & \hex{0x01} & \\
+Comm mode            & Full (\hex{0x03}) & encrypted $+$ MAC'd \\
+Access rights        & key 2 for all four roles & word \hex{0x2222} \\
+Lower limit          & 0 cents & \\
+Upper limit          & 100000 cents & \texteuro1000 \\
+PICC master key      & 16 $\times$ \hex{0x00} & factory default, never changed \\
+App master key       & 16 $\times$ \hex{0x11} & bench key \\
+App user key         & 16 $\times$ \hex{0x22} & bench key \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{trap}{These are bench keys}
+Identical on every card, hardcoded in the app, and published in this book. They
+protect nothing. See Section~\ref{sec:realkeys} for what a real deployment does.
+\end{trap}
+
+\section{DESFire command reference}
+
+\begin{center}\small
+\begin{tabular}{@{}llL{0.16\linewidth}L{0.34\linewidth}@{}}
+\toprule
+\thead{Cmd} & \thead{Name} & \thead{Comm mode} & \thead{Notes} \\
+\midrule
+\hex{0x5A} & SelectApplication  & plain & AID LSB-first \\
+\hex{0x60} & GetVersion         & plain & chains 3 frames \\
+\hex{0x71} & AuthenticateEV2First & --- & data \code{\{keyNo, 0x00\}} \\
+\hex{0xAF} & \emph{continue / additional frame} & --- & both a command and a status \\
+\hex{0x6C} & GetValue           & Full  & \\
+\hex{0x0C} & Credit             & Full  & stages only \\
+\hex{0xDC} & Debit              & Full  & stages only \\
+\hex{0x1C} & LimitedCredit      & Full  & needs the file flag \\
+\hex{0xC7} & CommitTransaction  & MAC   & \textbf{makes it permanent} \\
+\hex{0xA7} & AbortTransaction   & MAC   & discards staged changes \\
+\hex{0xCA} & CreateApplication  & plain & provisioning \\
+\hex{0xCC} & CreateValueFile    & MAC   & provisioning \\
+\hex{0xC4} & ChangeKey          & Full  & \textbf{irreversible} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Status words}
+
+\begin{center}\small
+\begin{tabular}{@{}lL{0.30\linewidth}L{0.42\linewidth}@{}}
+\toprule
+\thead{Status} & \thead{Meaning} & \thead{Usual cause} \\
+\midrule
+\hex{91 00} & OK & \\
+\hex{91 AF} & additional frame follows & not an error --- drain the chain \\
+\hex{91 0C} & no changes & \\
+\hex{91 1C} & illegal command & wrong command for this file type \\
+\hex{91 1E} & integrity error & \textbf{your MAC or CRC is wrong} \\
+\hex{91 7E} & length error & wrong \code{Lc} --- e.g.\ auth step 1 missing its \hex{0x00} \\
+\hex{91 9D} & permission denied & authenticated with the wrong key \\
+\hex{91 AE} & authentication error & wrong key, or session invalidated \\
+\hex{91 BE} & boundary error & debit would breach the file's limits \\
+\hex{91 F0} & file not found & card not provisioned \\
+\hex{91 F1} & file integrity error & card-side corruption \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\hex{6E 00} and \hex{6D 00} are \textbf{ISO-7816} errors, not DESFire ones. They
+mean your APDU wrapper is malformed --- bad CLA or INS --- not that the card
+rejected the command.

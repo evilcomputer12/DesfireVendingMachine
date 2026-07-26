@@ -1,0 +1,384 @@
+\chapter{The Android top-up app}
+\label{ch:android}
+
+\chapterbrief
+  {Put credit \emph{onto} the card from a phone. Build it yourself, in Dart, from the design you already understand.}
+  {Porting a design across languages --- and discovering how much of your stack was incidental.}
+  {A phone that adds credit, and cross-language proof your crypto is right.}
+
+\section{Why this chapter is different}
+
+You have built the whole reader stack once. The point of this chapter is not to
+learn NFC again. It is to discover something valuable:
+
+\begin{center}\bfseries\itshape
+Six of your ten chapters do not exist on Android.
+\end{center}
+
+The phone has an NFC controller with a driver already written. Android's
+\code{IsoDep} class hands you \code{transceive(byte[]) -> byte[]} directly. That
+single method is everything you built in Chapters~\ref{ch:spi}--\ref{ch:apdu}.
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.42\linewidth}L{0.48\linewidth}@{}}
+\toprule
+\thead{Your Pi stack} & \thead{Android} \\
+\midrule
+Ch.~\ref{ch:spi} \code{SpiLink}         & \emph{gone} --- the OS owns the radio \\
+Ch.~\ref{ch:driver} \code{Rc522Driver}  & \emph{gone} \\
+Ch.~\ref{ch:reader} \code{Rc522Reader}  & \emph{gone} \\
+Ch.~\ref{ch:blocks} \code{ProtocolBlock}& \emph{gone} --- the OS frames I-blocks \\
+Ch.~\ref{ch:activation} activation      & \emph{gone} --- you are handed an activated tag \\
+Ch.~\ref{ch:apdu} \code{IsoDepChannel}  & \textbf{\code{IsoDep.transceive()}} \\
+\midrule
+\textbf{Ch.~\ref{ch:cmac}--\ref{ch:secmsg} crypto} & \textbf{you port all of it, unchanged} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{concept}{The transport was replaceable; the protocol was the work}
+Look at the shape of your \code{ApduChannel} interface from
+Chapter~\ref{ch:apdu} and Android's \code{IsoDep.transceive}. They are the same.
+
+That is not luck --- it is what happens when you draw a seam at the right place.
+Everything above \code{ApduChannel} ports across a language, an operating system,
+and a completely different radio, without changing.
+
+If you want one test of whether an abstraction was well chosen, this is it:
+\emph{how much survives when the thing underneath is replaced entirely?}
+\end{concept}
+
+\begin{analogy}{Posting the letter}
+You have been writing a letter and hand-delivering it. Now you are posting it.
+The envelope, the courier, the van --- all different. The letter is identical.
+\end{analogy}
+
+\section{Setup}
+
+\begin{shell}
+flutter create --org com.midnightbrewer --platforms android topup_app
+cd topup_app
+\end{shell}
+
+\begin{xcode}
+dependencies:
+  flutter:
+    sdk: flutter
+  # Android IsoDep (ISO 14443-4) transceive.
+  # 4.x has a different API from 3.x -- pin the major version.
+  nfc_manager: ^4.2.1
+  # AES-ECB/CBC and AES-CMAC.
+  pointycastle: ^4.0.0
+\end{xcode}
+
+And in \code{android/app/src/main/AndroidManifest.xml}:
+
+\begin{xcode}
+<uses-permission android:name="android.permission.NFC" />
+<uses-feature android:name="android.hardware.nfc" android:required="true" />
+\end{xcode}
+
+\section{Dart for a Java programmer}
+
+The languages are close cousins. Four differences matter here.
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[\code{Uint8List}, not \code{byte[]}.] From \code{dart:typed\_data}.
+        Crucially its elements are \textbf{unsigned 0--255}: Dart has no
+        signed-byte trap, and all those \code{\& 0xFF} masks simply vanish.
+  \item[\code{int} is 64-bit.] So \code{1 << 40} works fine, but when writing a
+        32-bit value you must mask deliberately: \code{(v >> 24) \& 0xFF}.
+  \item[Async is explicit.] NFC calls are \code{Future}s. A function that awaits
+        must be \code{async}, and its callers must \code{await} it --- the
+        colouring propagates upward, much as \code{throws SpiException} did in
+        Java. Same discipline, different keyword.
+  \item[No checked exceptions.] Dart has \code{throw}/\code{catch} but the
+        compiler forces nothing. You lose the nagging, so you must be more
+        deliberate about error paths.
+\end{description}
+
+\section{Build it}
+
+\subsection{The transport --- one class replaces six chapters}
+
+\begin{dcode}
+import 'dart:typed_data';
+import 'package:nfc_manager/nfc_manager.dart';
+
+/// Sends one APDU to an activated card and returns the reply.
+///
+/// This is the ENTIRE transport layer -- the Android NFC stack has already
+/// done activation, anticollision, RATS and ISO-DEP framing for us.
+/// Compare Chapters 2-7 of the Pi build. Same seam, no work.
+class IsoDepTransceiver {
+  IsoDepTransceiver(this._isoDep);
+
+  final IsoDep _isoDep;
+
+  Future<Uint8List> transceive(Uint8List apdu) async {
+    // TODO: return await _isoDep.transceive(data: apdu);
+    //   Wrap failures in your own exception type so the UI never sees a
+    //   platform exception -- the same translate() discipline as Chapter 12.
+    throw UnimplementedError();
+  }
+}
+\end{dcode}
+
+\subsection{The crypto --- port it directly}
+
+Your Java from Chapters~\ref{ch:cmac}--\ref{ch:secmsg} translates almost line for
+line. \code{pointycastle} supplies AES \emph{and} CMAC, so you do not even
+reimplement RFC 4493 --- but you must verify it produces the same bytes.
+
+\begin{dcode}
+import 'dart:typed_data';
+import 'package:pointycastle/export.dart';
+
+const int kAesBlockSize = 16;
+
+Uint8List aesEcbEncryptBlock(Uint8List key, Uint8List block) {
+  final engine = AESEngine()..init(true, KeyParameter(key));
+  final out = Uint8List(kAesBlockSize);
+  engine.processBlock(block, 0, out, 0);
+  return out;
+}
+
+Uint8List aesCbcEncrypt(Uint8List key, Uint8List iv, Uint8List data) {
+  // TODO: CBCBlockCipher(AESEngine())
+  //         ..init(true, ParametersWithIV(KeyParameter(key), iv));
+  //       process block by block; NO padding (DESFire pads itself).
+  throw UnimplementedError();
+}
+
+Uint8List aesCmac(Uint8List key, Uint8List message) {
+  final mac = CMac(AESEngine(), 128)..init(KeyParameter(key));
+  return mac.process(message);
+}
+
+/// DESFire keeps the ODD-indexed bytes: mac[1], mac[3], ... mac[15].
+Uint8List truncateMac(Uint8List mac) {
+  // TODO: 8 bytes, out[i] = mac[i * 2 + 1];
+  throw UnimplementedError();
+}
+
+/// The 32-byte derivation vector, exactly as in Chapter 9.
+Uint8List deriveSessionKey(
+    Uint8List key, Uint8List rndA, Uint8List rndB, int label) {
+  // TODO: sv[0] = label (0xA5 enc / 0x5A mac); sv[1] = the other;
+  //       sv[2..5] = 00 01 00 80;
+  //       sv[6..7] = rndA[0..1];
+  //       sv[8..13] = rndA[2..7] ^ rndB[0..5];
+  //       sv[14..23] = rndB[6..15];
+  //       sv[24..31] = rndA[8..15];
+  //       return aesCmac(key, sv);
+  throw UnimplementedError();
+}
+
+/// ISO 7816-4: append 0x80 then zeros. ALWAYS adds at least one byte.
+Uint8List padIso7816(Uint8List data) {
+  final paddedLength = (data.length | 0x0F) + 1;
+  final out = Uint8List(paddedLength);
+  out.setRange(0, data.length, data);
+  out[data.length] = 0x80;
+  return out;
+}
+\end{dcode}
+
+\begin{verifybox}
+\textbf{Verify with the same vectors.} This is the elegant part: the vectors in
+Appendix~\ref{app:vectors} are language-agnostic. Your Dart must produce
+byte-for-byte what your Java produced.
+
+\begin{dcode}
+void main() {
+  test('derives the Chapter 9 session keys', () {
+    final key  = fromHex('00112233445566778899aabbccddeeff');
+    final rndA = fromHex('a0a1a2a3a4a5a6a7a8a9aaabacadaeaf');
+    final rndB = fromHex('b0b1b2b3b4b5b6b7b8b9babbbcbdbebf');
+
+    expect(toHex(deriveSessionKey(key, rndA, rndB, 0xA5)),
+           'd46c03528ecd3b1f1148e708d3e9729d');
+    expect(toHex(deriveSessionKey(key, rndA, rndB, 0x5A)),
+           '116d156cc502da820eb57915f189ec74');
+  });
+
+  test('truncates a CMAC to the odd bytes', () {
+    expect(toHex(truncateMac(fromHex('00112233445566778899aabbccddeeff'))),
+           '1133557799bbddff');
+  });
+}
+\end{dcode}
+
+\begin{shell}
+flutter test           # no phone, no card -- same discipline as the Pi build
+\end{shell}
+
+If your Dart disagrees with your Java on any vector, \textbf{one of them is
+wrong}, and you now know before either touches a card. Two independent
+implementations converging on the same bytes is much stronger evidence than
+either alone.
+\end{verifybox}
+
+\subsection{Credit --- the mirror image of debit}
+
+\begin{dcode}
+/// Credit (0x0C) in CommMode.Full -- the mirror image of Debit.
+///
+/// Identical wire format; only the command byte differs. Like debit it only
+/// STAGES the change: nothing moves until commitTransaction().
+Future<void> credit(int fileNo, int amountCents) async {
+  // TODO: same shape as Chapter 11's debit:
+  //   header     = [fileNo]
+  //   ciphertext = session.encryptCommandData(encodeValue(amountCents))
+  //   macInput   = header + ciphertext
+  //   mac        = session.commandMac(0x0C, macInput)
+  //   send, check status, incrementCounter, verify response MAC over empty
+  throw UnimplementedError();
+}
+\end{dcode}
+
+And the top-up sequence, which reads the balance back:
+
+\begin{dcode}
+Future<int> topUp(int fileNo, int amountCents) async {
+  final before = await getValue(fileNo);
+  await credit(fileNo, amountCents);
+  await commitTransaction();
+  final after = await getValue(fileNo);      // trust nothing; re-read
+
+  if (after != before + amountCents) {
+    throw StateError('balance did not move as expected');
+  }
+  return after;
+}
+\end{dcode}
+
+Reading the balance back after the commit is not paranoia --- it is the only way
+to \emph{know}. If the phone loses the field between \code{credit} and
+\code{commitTransaction}, the card discards the delta and the balance is
+unchanged. Same safety property as Chapter~\ref{ch:secmsg}, now protecting your
+customer's money rather than yours.
+
+\section{Provisioning: turning a blank card into a wallet}
+
+A factory-fresh DESFire has no application, no value file, and a DES master key.
+To make one work with your kiosk:
+
+\begin{enumerate}
+  \item authenticate at PICC level with the master key (16 $\times$ \hex{0x00} factory default);
+  \item \code{CreateApplication} (\hex{0xCA}) --- AID \hex{0x010203}, 3 keys, AES;
+  \item select the application, authenticate with its master key (initially 16 $\times$ \hex{0x00});
+  \item \code{ChangeKey} (\hex{0xC4}) --- set app master key (\hex{0x11}\ldots) and user key (\hex{0x22}\ldots);
+  \item re-authenticate with the new app master key;
+  \item \code{CreateValueFile} (\hex{0xCC}) --- file \hex{0x01}, CommMode.Full,
+        access via key 2, limits 0\ldots100000, initial value 0.
+\end{enumerate}
+
+Wire format for \code{CreateValueFile}, 17 bytes:
+
+\begin{trace}
+[0]      fileNo
+[1]      commSettings          0x03 = Full
+[2..3]   accessRights          little-endian; nibbles: read|write|rw|changeRights
+[4..7]   lowerLimit            signed LE
+[8..11]  upperLimit            signed LE
+[12..15] initialValue          signed LE
+[16]     limitedCreditEnabled  0x00 / 0x01
+\end{trace}
+
+The access-rights word packs four 4-bit key numbers: \emph{read} (GetValue),
+\emph{write} (Debit), \emph{readWrite} (Credit too), and
+\emph{changeAccessRights}. Using key 2 for all four gives \hex{0x2222}. Nibble
+\hex{0xE} means free access; \hex{0xF} means never.
+
+\begin{trap}{\texttt{ChangeKey} is irreversible}
+Set a key to a value you do not record and that card is scrap --- permanently, by
+design. There is no recovery path; that \emph{is} the security property.
+
+Before you run provisioning:
+\begin{itemize}
+  \item use \textbf{dedicated test cards} you bought for this project;
+  \item never change the PICC master key from its factory default (this project
+        deliberately does not, so any other tool can re-personalise the card);
+  \item never point this at a card you did not buy for this --- the DESFire in
+        your wallet may be your office badge or transit pass, and it will not
+        survive.
+\end{itemize}
+
+And \textbf{never auto-provision on tap}. Require an explicit ``Set up this
+card'' button press. A member of the public tapping your app must never have
+their existing card silently rewritten.
+\end{trap}
+
+\section{The security reality of hardcoded keys}
+\label{sec:realkeys}
+
+Your app will contain, in plaintext, the AES keys for every card in the fleet.
+Anyone who pulls the APK off a phone can extract them and mint unlimited balance
+on every card you have issued.
+
+\textbf{For a bench project with test cards this is fine.} Say so out loud, in a
+comment, so nobody mistakes it for a design:
+
+\begin{dcode}
+/// BENCH KEYS. These are compiled into the APK in plaintext. Anyone who pulls
+/// the APK can read them and mint unlimited balance on every card, because the
+/// same key is on every card. Acceptable for a bench rig with test cards.
+/// NOT acceptable for anything representing real money.
+\end{dcode}
+
+\begin{concept}{What a real deployment does instead}
+Worth understanding even if you never build it.
+
+\textbf{1. Key diversification.} Each card gets a \emph{different} key, derived
+from the card's UID and a master key (typically via CMAC). Compromise one card
+and you learn one card's key --- not the fleet's.
+
+\textbf{2. A backend HSM or SAM.} The master key never leaves tamper-resistant
+hardware. The phone becomes a dumb pipe: it relays APDUs between the card and the
+server, and the \emph{server} performs the cryptography.
+
+\textbf{3. Server-side transaction logs}, so the balance on the card is a cache
+rather than the source of truth, and double-spends are detectable after the fact.
+
+The gap between ``works'' and ``safe to deploy'' is mostly key management, and it
+is why payment systems have HSMs. Knowing exactly where your bench rig sits on
+that spectrum is the professional part.
+\end{concept}
+
+\section{Build order}
+
+Do it in this order:
+
+\begin{enumerate}
+  \item \code{flutter create} plus dependencies; blank app runs on your phone.
+  \item \textbf{Crypto module and tests.} No NFC yet. All vectors green.
+  \item \code{IsoDepTransceiver} and a ``read the card's version'' screen. Prove
+        \hex{90 60 00 00 00} returns \hex{...91AF}.
+  \item \code{authenticateEv2First}, on a card the kiosk already works with.
+  \item \code{getValue} --- display the balance. Read-only, so mistakes are harmless.
+  \item \code{credit} $+$ \code{commit} $+$ read-back. Now money moves.
+  \item Provisioning screen, last, behind an explicit button.
+  \item UI polish --- the NFC pulse animation, preset amounts, result screen.
+\end{enumerate}
+
+Steps 2 and 5 are the natural stopping points if you are filming: ``the crypto
+agrees across two languages'' and ``the phone reads the balance the Pi wrote''.
+
+\section{Traps}
+
+\begin{traptable}
+\code{nfc\_manager} API does not match tutorials & 3.x and 4.x differ. Pin 4.x and use its docs. \\
+Works on one phone, not another & NFC antenna placement varies enormously. Try the upper third of the back. \\
+Tag lost mid-transaction & Phone moved. This is \emph{normal} --- it is why commit exists. Handle it. \\
+Dart and Java disagree on a MAC & Almost always the counter or TI, not the AES. Print both inputs. \\
+\hex{91 AE} after provisioning & You changed a key and re-authenticated with the old one. \\
+Card bricked & You changed a key you did not record. There is no recovery. This is why you buy spares. \\
+\end{traptable}
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "topup: Flutter app -- crypto ported, credit + commit, provisioning"
+\end{shell}

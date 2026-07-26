@@ -1,0 +1,190 @@
+\chapter{The bug museum}
+\label{app:trouble}
+
+Every trap in this book, indexed by \textbf{what you actually see}. These are
+real bugs from the real build, not hypotheticals.
+
+\section{How to debug this stack at all}
+
+Before the tables --- the method, which matters more than any individual fix.
+
+\subsection{Bisect by layer}
+
+The stack has six layers and two seams. Find which layer is lying:
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily, node distance=3.5mm,
+   q/.style={draw=brewergrey, rounded corners=2pt, minimum width=68mm,
+             minimum height=7.5mm, inner sep=3pt, anchor=west}]
+  \node[q] (a) at (0,0)     {\code{version() == 0x92}? \hfill \itshape SPI + driver (Ch.~2--3)};
+  \node[q] (b) at (0,-9mm)  {\code{isCardPresent()} true? \hfill \itshape transceive + init (Ch.~4)};
+  \node[q] (c) at (0,-18mm) {\code{activate()} returns a UID? \hfill \itshape anticollision + CRC (Ch.~6)};
+  \node[q] (d) at (0,-27mm) {GetVersion returns \hex{91AF}? \hfill \itshape ISO-DEP framing (Ch.~7)};
+  \node[q] (e) at (0,-36mm) {vectors green? \hfill \itshape cryptography (Ch.~8--11)};
+  \foreach \x/\y in {a/b, b/c, c/d, d/e}{
+     \draw[-{Stealth[length=3.5pt]}, brewergrey] (\x.south west) ++(4mm,0) -- ++(0,-1.5mm);}
+  \node[font=\scriptsize\itshape, color=brewerred, anchor=west] at (72mm,-18mm)
+       {the first \emph{no}};
+  \node[font=\scriptsize\itshape, color=brewerred, anchor=west] at (72mm,-23mm)
+       {is your bug};
+\end{tikzpicture}
+\end{center}
+
+\textbf{Do not debug above a layer that has not answered ``yes''.} Most long
+debugging sessions are someone investigating layer five while layer two is
+broken.
+
+\subsection{Three more rules}
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[Crypto never gets debugged on hardware.] If a card operation fails, run
+        the offline vectors first. Green vectors mean the bug is in framing,
+        state, or the card's configuration --- not in your mathematics. That
+        single distinction saves hours.
+  \item[Print the MAC \emph{input}, not the MAC.] When a MAC mismatches, the
+        output tells you nothing --- it is noise either way. The input tells you
+        everything: you can see immediately whether the counter, the TI, or the
+        data is wrong.
+  \item[Suspect the counter first.] In secure messaging, roughly nine failures
+        out of ten are the command counter being off by one, not the
+        cryptography.
+\end{description}
+
+\section{Hardware and SPI (Chapters~\ref{ch:spi}--\ref{ch:driver})}
+
+\begin{traptable}
+\code{version()} $= -110$ & Signed byte. Add \code{\& 0xFF}. \\
+\code{version()} $=$ \hex{0x00} & MISO stuck low: power (3.3\,V!), wiring, CS pin. \\
+\code{version()} $=$ \hex{0xFF} & MISO floating: not connected. \\
+Version flickers between runs & Wire length / noise. \textbf{Shorten the jumpers.} Not a code bug. \\
+Reads fine, writes ignored & Read bit \hex{0x80} set on writes. \\
+\code{NoClassDefFoundError: com/sun/jna} & JNA missing. \code{mvn dependency:copy-dependencies}. \\
+\code{No gpio chip found} in a \emph{unit test} & The test constructs real hardware --- you inherited instead of composing. \\
+Second run fails, first worked & Device file still locked. \code{close()} / try-with-resources. \\
+\code{Permission denied} on \code{/dev/spidev0.0} & \code{sudo usermod -aG spi,gpio \$USER}. \\
+\end{traptable}
+
+\begin{trap}{The \texttt{extends Pi4jSpiLink} disaster}
+Writing \code{class Rc522Driver extends Pi4jSpiLink} compiles and looks
+convenient. Then every unit test constructs a Pi4J context, hunts for a GPIO
+chip, and dies on your laptop.
+
+You have welded the driver to the hardware and destroyed the seam.
+\textbf{A driver HAS-A link; it is not a kind of link.}
+\end{trap}
+
+\section{Card detection and activation (Chapters~\ref{ch:reader}, \ref{ch:activation})}
+
+\begin{traptable}
+Program runs for \emph{minutes} & Ported the C's iteration counter. Use a \code{nanoTime} deadline. \\
+\code{0/15} polls, version fine & Init incomplete: \reg{TxASKReg}$=$\hex{0x40}, \reg{ModeReg}$=$\hex{0x3D}. \\
+Detects once, then blind forever & Card sits in HALT. Send WUPA (\hex{0x52}) after REQA. \\
+Detection about half the time & Card position or wires. Flat on the antenna, short wires. \\
+7-byte UID, first byte wrong & Kept the \hex{0x88} cascade tag. Use \code{ac1[1..3]}. \\
+\code{select()} returns $-1$ & CRC wrong. \reg{ModeReg}$=$\hex{0x3D} (preset \hex{0x6363}). \\
+\hex{SAK = 0x08} & It is a MIFARE Classic. Wrong card. \\
+RATS empty & Not 14443-4, or RATS sent twice. \\
+Works, then fails on retry & Card left ACTIVE. \code{softReset()} $+$ \code{antennaOn()} per tap. \\
+\code{NegativeArraySizeException} & FIFO level read too early. Check the IRQ wait loop. \\
+\end{traptable}
+
+\section{ISO-DEP and APDUs (Chapter~\ref{ch:apdu})}
+
+\begin{traptable}
+Empty reply & Block number desynced. Toggle once per exchange. \\
+Works exactly once per power-up & Never toggling. \code{blockNumber \^{}= 1}. \\
+Reply one byte too long & PCB not stripped. \code{copyOfRange(reply, 1, ...)}. \\
+\hex{6E 00} / \hex{6D 00} & ISO-7816 error. Check CLA \hex{0x90} and the trailing \hex{0x00}. \\
+\hex{91 AE} on a command that used to work & Card mid-chain from \hex{91 AF}. Drain it or reset the field. \\
+GetVersion byte 3 is \hex{0x12} & It is an EV1 --- no \code{AuthenticateEV2First}. \\
+\end{traptable}
+
+\section{Cryptography (Chapters~\ref{ch:cmac}--\ref{ch:secmsg})}
+
+\begin{traptable}
+CMAC empty-message vector fails only & Missing the \code{n=1, lastComplete=false} case. \\
+CMAC partial-block vectors fail & Padding: \hex{0x80} then zeros, not all zeros. \\
+CMAC full-block vectors fail & $K_1$/$K_2$ swapped. Full $= K_1$, padded $= K_2$. \\
+\emph{All} CMAC vectors fail plausibly & \code{leftShift} carry direction. Walk \textbf{backwards}. \\
+Both session keys wrong & SV layout. Print the SV and compare to the spec. \\
+Session keys swapped & Labels reversed. \hex{0xA5} $=$ enc, \hex{0x5A} $=$ mac. \\
+\hex{91 7E} on auth step 1 & Sent only \code{keyNo}. Must be \code{\{ keyNo, 0x00 \}}. \\
+Step-2 ciphertext $\neq$ vector & Two separate CBC calls. It is one \textbf{32-byte} run. \\
+Auth ``succeeds'' always & You never compared RndA$'$. Actually throw on mismatch. \\
+Fake test decrypts garbage & Replies lack \hex{91 xx}. Append the status word. \\
+\textbf{Auth OK, first \code{getValue} MAC fails} & \textbf{Session built without TI.} \\
+Command MACs right, response MACs wrong & Increment ordering: increment \emph{before} verifying. \\
+First command OK, second fails & Counter not incremented, or incremented twice. \\
+Balance unchanged after debit & No commit. Working as designed. \\
+\hex{91 BE} & Boundary error: debit breaches the file's lower limit. \\
+\hex{91 9D} & Permission denied: wrong key for that file's access rights. \\
+\hex{91 F0} & File not found: card not provisioned. \\
+Everything fails after one bad run & Card mid-transaction. Power-cycle the field, re-authenticate. \\
+\end{traptable}
+
+\subsection{The three crypto bugs that cost the most time}
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[1. The TI one-liner.] \code{authenticateEv2First} builds the session; if
+        you pass only \code{(key, rndA, rndB)}, the TI defaults to zeros.
+        Authentication still \emph{succeeds} --- the TI is not used until secure
+        messaging --- so the failure appears \emph{one command later}, in code
+        that is completely correct.
+  \item[2. Counter increment ordering.] The counter ticks after the card accepts
+        the command and \emph{before} you verify the response. Backwards, and
+        every command MAC is right while every response check fails.
+  \item[3. Fake replies without status words.] Your card code strips two bytes
+        off every reply. A fake returning bare ciphertext loses two real bytes,
+        and the decrypt produces garbage that looks exactly like a crypto bug.
+\end{description}
+
+\section{Tests and tooling}
+
+\begin{traptable}
+Test passes but proves nothing & The method is never called. Assert on a \emph{return value}. \\
+Test passes, hardware fails & Fake too permissive. Make it assert what it received. \\
+Changed code, behaviour identical & Stale \code{.class} files. \code{mvn clean compile}. \\
+Passes alone, fails in the suite & Shared mutable state. Fresh session per \code{@Test}. \\
+Debit and getValue tests conflict & Same fake, different counters. Separate \code{@Test} methods. \\
+\end{traptable}
+
+\begin{trap}{The green test that tests nothing}
+The most dangerous bug in this book, because it \emph{rewards} you. You add a
+\code{case 0x6C} to your fake, run the suite, see green --- and never notice the
+test body does not call \code{getValue}.
+
+Guard against it deliberately. After writing a test, ask: \emph{what would I have
+to break to make this fail?} If the answer is ``nothing'', it is not a test.
+\end{trap}
+
+\section{UI and deployment (Chapters~\ref{ch:kiosk}, \ref{ch:deploy})}
+
+\begin{traptable}
+UI freezes on tap & Card work on the FX thread. Use the background worker. \\
+Intermittent rendering corruption & Node touched off-thread. \code{Platform.runLater} everywhere. \\
+Animations crawl & Software rendering. \code{-Dprism.forceGPU=true}. \\
+Touch inverted & Display rotated, input not. Rotate the input device too. \\
+A tile stuck highlighted & Xwayland cursor sitting on it. \code{Cursor.NONE}. \\
+Second tap always declines & Field not power-cycled per transaction. \\
+Kiosk dies overnight & Unhandled exception. Broad catch $+$ \code{Restart=always}. \\
+Simulator used on the Pi & Constructor threw. Read the logged message. \\
+\end{traptable}
+
+\section{Environment oddities from the real build}
+
+Not bugs in your code, but they will cost you time anyway.
+
+\begin{itemize}
+  \item \textbf{The Pi's IP changes constantly} on DHCP. Set a static lease or
+        use \code{raspberrypi.local}.
+  \item \textbf{SSH host-key conflicts} after a DHCP reshuffle: \emph{password
+        authentication is disabled to avoid man-in-the-middle attacks}. Fix the
+        known-hosts entry rather than disabling checking permanently.
+  \item \textbf{sshd dies under memory pressure} on a Zero 2 W with a JavaFX app
+        running. Add swap, or do not run the kiosk while developing.
+  \item \textbf{\code{git commit} hangs for minutes} on a folder synced by
+        iCloud or Dropbox --- the index refresh stalls on the network
+        filesystem. Keep repositories out of synced folders.
+  \item \textbf{\code{timeout} is not on macOS} by default. Use \code{gtimeout}
+        from coreutils, or a background job.
+\end{itemize}

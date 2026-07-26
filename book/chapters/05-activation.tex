@@ -1,0 +1,337 @@
+\chapter{Activation}
+\label{ch:activation}
+
+\chapterbrief
+  {Take a card from ``something is on the antenna'' to ``I know its UID and it is ready for commands''.}
+  {Value objects and immutability.}
+  {A real UID, SAK and ATS printed from your card.}
+
+\section{The problem: the card's state machine}
+
+A contactless card is a state machine, and you must walk it in order.
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily, node distance=11mm,
+   st/.style={draw=brewernavy, rounded corners=2pt, minimum width=26mm,
+              minimum height=7.5mm, inner sep=3pt},
+   lbl/.style={font=\scriptsize\sffamily, color=breweramber!80!black}]
+  \node[st] (off) {POWER-OFF};
+  \node[st, below=of off] (idle) {IDLE};
+  \node[st, below=of idle] (ready) {READY};
+  \node[st, below=of ready] (active) {ACTIVE};
+  \node[st, below=of active, draw=brewergreen] (isodep) {ISO-DEP};
+  \draw[-{Stealth[length=4pt]}, brewernavy] (off) -- node[right, lbl] {enters the field} (idle);
+  \draw[-{Stealth[length=4pt]}, brewernavy] (idle) -- node[right, lbl] {REQA / WUPA} (ready);
+  \draw[-{Stealth[length=4pt]}, brewernavy] (ready) -- node[right, lbl] {anticollision + SELECT} (active);
+  \draw[-{Stealth[length=4pt]}, brewernavy] (active) -- node[right, lbl] {RATS} (isodep);
+  \draw[-{Stealth[length=4pt]}, brewergrey, dashed]
+        (isodep.west) -- ++(-16mm,0) |- node[left, lbl, pos=0.25] {leaves the field} (off.west);
+  \node[font=\scriptsize\itshape, color=brewergreen, right=3mm of isodep]
+       {you can finally send APDUs};
+  \node[font=\scriptsize\itshape, color=brewergrey, right=3mm of ready]
+       {Chapter~\ref{ch:reader} got you here};
+\end{tikzpicture}
+\end{center}
+
+\section{Anticollision, and why it exists}
+\index{anticollision}
+
+Put two cards on the antenna and both answer at once --- the radio signals
+collide and you get mush. ISO-14443 solves this with a bit-by-bit tree walk: the
+reader asks ``everyone whose UID starts with these bits, answer'', and narrows
+until exactly one card remains.
+
+We implement the \textbf{simple case}: ask for the whole UID at once, and if the
+reply's checksum is intact, exactly one card answered. If two cards collide, the
+checksum fails, we return empty, and the user is told to present one card. That
+is honest engineering for a coffee machine.
+
+\paragraph{BCC.} The block check character is
+\code{uid[0] \^{} uid[1] \^{} uid[2] \^{} uid[3]}. XOR the four bytes; the result
+must equal the fifth. A cheap integrity check that catches both RF corruption
+and undetected collisions.
+
+\subsection{Cascade levels, and the \texttt{0x88} tag}
+
+UIDs come in 4-byte and 7-byte flavours, but an anticollision reply is fixed at
+five bytes (four data + one checksum). A 7-byte UID therefore needs two rounds:
+
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize\sffamily, x=8mm, y=7mm]
+  % level 1
+  \node[font=\footnotesize\sffamily, anchor=west, color=brewergrey] at (-0.2,2.35)
+       {Level 1 (SEL \hex{0x93}) reply};
+  \foreach \i/\lbl/\c in {0/{\hex{88}}/brewerred!12, 1/{u0}/breweramber!14,
+                          2/{u1}/breweramber!14, 3/{u2}/breweramber!14,
+                          4/{BCC}/black!7}{
+     \fill[\c] (\i,1.3) rectangle ++(1,1);
+     \draw[brewergrey] (\i,1.3) rectangle ++(1,1);
+     \node at (\i+0.5,1.8) {\lbl};
+  }
+  \node[color=brewerred, font=\scriptsize\itshape, anchor=west] at (5.25,1.8)
+       {cascade tag --- NOT part of the UID};
+  % level 2
+  \node[font=\footnotesize\sffamily, anchor=west, color=brewergrey] at (-0.2,0.85)
+       {Level 2 (SEL \hex{0x95}) reply};
+  \foreach \i/\lbl in {0/{u3}, 1/{u4}, 2/{u5}, 3/{u6}}{
+     \fill[breweramber!14] (\i,-0.2) rectangle ++(1,1);
+     \draw[brewergrey] (\i,-0.2) rectangle ++(1,1);
+     \node at (\i+0.5,0.3) {\lbl};
+  }
+  \fill[black!7] (4,-0.2) rectangle ++(1,1);
+  \draw[brewergrey] (4,-0.2) rectangle ++(1,1);
+  \node at (4.5,0.3) {BCC};
+  % result
+  \node[font=\footnotesize\sffamily, anchor=west, color=brewergrey] at (-0.2,-0.75)
+       {Real UID = 7 bytes};
+  \foreach \i/\lbl in {0/{u0}, 1/{u1}, 2/{u2}, 3/{u3}, 4/{u4}, 5/{u5}, 6/{u6}}{
+     \fill[brewergreen!12] (\i,-1.9) rectangle ++(1,1);
+     \draw[brewergreen!60] (\i,-1.9) rectangle ++(1,1);
+     \node at (\i+0.5,-1.4) {\lbl};
+  }
+\end{tikzpicture}
+\end{center}
+
+The SAK from level 1 comes back with \textbf{bit 2 (\hex{0x04}) set},
+confirming ``UID incomplete, do the next level''. DESFire EV2/EV3 always has a
+7-byte UID, so you \emph{will} exercise this path.
+
+\begin{trap}{Forgetting to skip the \hex{0x88}}
+Keep the cascade tag and you get a 7-byte UID that is wrong in its first byte
+--- and it looks completely plausible. You will only notice when it does not
+match what your phone reports, which might be days later.
+\end{trap}
+
+\paragraph{RATS.} Request Answer To Select (\hex{0xE0} \hex{0x50}) is the final
+handshake: ``let us speak ISO-14443-4''. The card replies with its \textbf{ATS},
+describing its capabilities and maximum frame size. The \hex{0x50} parameter is
+FSDI${}=5$ (we accept up to 64-byte frames) and CID${}=0$.
+
+\section{Build it}
+
+\subsection{\texttt{ActivatedCard} --- a value object}
+\index{value object}\index{immutability}
+
+\begin{jcode}
+package com.midnightbrewer.hardware;
+
+/**
+ * What activation produced: a UID, a SAK and an ATS.
+ *
+ * A VALUE OBJECT -- it holds data, has no behaviour that changes it, and is
+ * IMMUTABLE: every field is final and there is no setter. Once built, it can
+ * never disagree with itself.
+ *
+ * Why bother, instead of returning byte[][] or three out-parameters?
+ *   - the three fields arrive together and belong together
+ *   - the compiler enforces that you cannot forget one
+ *   - it has a NAME, so signatures read as intent:
+ *       ActivatedCard activate()      vs      byte[][] activate()
+ */
+public final class ActivatedCard {
+
+    private final byte[] uid;
+    private final int sak;
+    private final byte[] ats;
+
+    public ActivatedCard(byte[] uid, int sak, byte[] ats) {
+        // DEFENSIVE COPY on the way in: if we stored the caller's array
+        // directly, they could mutate our state afterwards and we would
+        // silently change. Copy, and we own it.
+        this.uid = uid.clone();
+        this.sak = sak;
+        this.ats = ats.clone();
+    }
+
+    /** Defensive copy on the way OUT too, for the same reason. */
+    public byte[] uid() { return uid.clone(); }
+
+    public int sak() { return sak; }
+
+    public byte[] ats() { return ats.clone(); }
+
+    /** The UID as spaced uppercase hex, e.g. "04 76 18 62 7B 20 90". */
+    public String uidHex() {
+        // TODO: StringBuilder, String.format("%02X ", b) per byte, trim().
+        return null;
+    }
+}
+\end{jcode}
+
+\begin{concept}{Three decisions, and why each one}
+\textbf{\code{final class}} --- nobody may subclass it. For a value object that
+is right: there is no such thing as a ``special kind of ActivatedCard'', and
+allowing subclasses would let someone override \code{uid()} to return something
+else, breaking the guarantee.
+
+\textbf{Defensive copies both ways} --- the part people skip. Arrays in Java are
+references; handing out \code{this.uid} hands out a pointer to your internals,
+and the caller can scribble on it. \code{clone()} costs seven bytes and buys you
+a class that genuinely cannot be corrupted from outside.
+
+\textbf{Immutability} --- an \code{ActivatedCard} is \emph{a fact about a
+moment}: ``at 14:32 this card, with this UID, was activated''. Facts do not
+change. Making it immutable means you can pass it anywhere, store it, log it,
+hand it to another thread, and never wonder whether something modified it.
+\end{concept}
+
+\subsection{The activation sequence}
+
+Add these constants to \code{Iso14443Reader}:
+
+\begin{jcode}
+    /** Anticollision/SELECT command bytes for the two cascade levels. */
+    private static final byte SEL_CL1 = (byte) 0x93;
+    private static final byte SEL_CL2 = (byte) 0x95;
+
+    /** NVB byte that turns an anticollision into a SELECT (full UID follows). */
+    private static final byte SELECT_NVB = 0x70;
+
+    /** SAK bit 3: "UID incomplete, do the next cascade level". */
+    private static final int CASCADE_BIT = 0x04;
+
+    /** RATS: request ISO-14443-4. PARAM 0x50 = FSDI 5, CID 0. */
+    private static final byte RATS_CMD   = (byte) 0xE0;
+    private static final byte RATS_PARAM = 0x50;
+
+    /** The tag prefixing a 7-byte UID's first anticollision reply. */
+    private static final byte CASCADE_TAG = (byte) 0x88;
+
+    /** Anticollision reply is 4 UID/CT bytes + 1 BCC. */
+    private static final int ANTICOLL_LENGTH = 5;
+\end{jcode}
+
+And the methods:
+
+\begin{jcode}
+    // =================================================================
+    // anticollision -- ask the card for (part of) its UID.
+    //
+    //   C: serNum[0] = 0x93; serNum[1] = 0x20;   // 0x20 NVB = "send it all"
+    //      ToCard(PCD_TRANSCEIVE, serNum, 2, ...);
+    //      // verify serNum[0]^[1]^[2]^[3] == serNum[4]
+    //
+    // Takes selCode so it works at BOTH levels. Full bytes, so
+    // bitsInLastByte = 0. Returns the 5-byte reply, or empty if invalid.
+    // =================================================================
+    public byte[] anticollision(byte selCode) throws SpiException {
+        // TODO 1: transceive { selCode, 0x20 } with 0 bits-in-last-byte.
+        // TODO 2: a valid reply is exactly ANTICOLL_LENGTH bytes; else empty.
+        // TODO 3: verify the BCC (XOR of the first four == the fifth);
+        //         if it fails the read was garbled -> return empty.
+        // TODO 4: return the reply.
+        return new byte[0];
+    }
+
+    // =================================================================
+    // select -- send the UID back, receive the SAK.
+    //
+    //   C: buffer[0]=selCode; buffer[1]=0x70;      // 0x70 NVB = SELECT
+    //      memcpy(&buffer[2], anticoll, 5);        // 4 UID + BCC
+    //      CalculateCRC(buffer, 7, &buffer[7]);    // -> 9 bytes
+    //      ToCard(...);   // reply = SAK(1) + CRC(2)
+    //
+    // @return the SAK byte, or -1 if the reply was malformed.
+    // =================================================================
+    public int select(byte selCode, byte[] anticoll) throws SpiException {
+        // TODO 1: build a 7-byte frame { selCode, SELECT_NVB, ...anticoll(5) }.
+        // TODO 2: byte[] crc = calculateCrc(frame7);
+        //         build a 9-byte frame: the 7, then crc[0], crc[1].
+        // TODO 3: byte[] reply = transceive(frame9, 0);
+        // TODO 4: if reply.length < 1 return -1, else return reply[0] & 0xFF.
+        return -1;
+    }
+
+    // =================================================================
+    // rats -- ask to speak ISO-14443-4; the card returns its ATS.
+    //   C: req[0]=0xE0; req[1]=0x50; CalculateCRC(req,2,&req[2]); ToCard(...)
+    // =================================================================
+    public byte[] rats() throws SpiException {
+        // TODO: header { RATS_CMD, RATS_PARAM }, append its CRC, transceive.
+        return new byte[0];
+    }
+
+    // =================================================================
+    // activate() -- the whole sequence, as another TEMPLATE METHOD.
+    //
+    // 'final' so a subclass cannot reorder the protocol.
+    //   level 1: anticollision -> select -> SAK
+    //   if the SAK's cascade bit is set, the UID is 7 bytes: do level 2
+    //   then RATS
+    // and assembles the real UID:
+    //   - 4-byte card: ac1[0..3]
+    //   - 7-byte card: ac1[1..3]  (SKIP the 0x88 tag)  +  ac2[0..3]
+    // =================================================================
+    public final ActivatedCard activate() throws SpiException {
+        // TODO 1: ac1 = anticollision(SEL_CL1); if empty -> throw SpiException.
+        //         sak1 = select(SEL_CL1, ac1);
+        // TODO 2: if ((sak1 & CASCADE_BIT) == 0) -> 4-byte UID:
+        //         uid = ac1[0..3], return new ActivatedCard(uid, sak1, rats());
+        // TODO 3: else 7-byte UID: ac2 = anticollision(SEL_CL2);
+        //         sak2 = select(SEL_CL2, ac2);
+        //         uid = { ac1[1], ac1[2], ac1[3], ac2[0..3] }
+        //         return new ActivatedCard(uid, sak2, rats());
+        return null;
+    }
+\end{jcode}
+
+\section{Verify on hardware}
+
+\begin{jcode}
+if (reader.isCardPresent()) {              // wake the card into READY first
+    ActivatedCard card = reader.activate();
+    System.out.println("UID  = " + card.uidHex());
+    System.out.printf("SAK  = 0x%02X%n", card.sak());
+    System.out.println("ATS  = " + hex(card.ats()));
+}
+\end{jcode}
+
+\begin{verifybox}
+For a DESFire EV3:
+\begin{trace}
+UID  = 04 76 18 62 7B 20 90
+SAK  = 0x20
+ATS  = 06 75 77 81 02 80 02 F0
+\end{trace}
+\end{verifybox}
+
+\paragraph{How to read that output.}
+
+\begin{itemize}
+  \item \textbf{UID starts \hex{04}} --- NXP's manufacturer byte. Seven bytes
+        total, so the cascade path ran and you skipped the tag correctly.
+  \item \textbf{\hex{SAK = 0x20}} --- bit 5 set means ``ISO-14443-4
+        compliant''. This is the card telling you \emph{I speak APDUs}. A MIFARE
+        Classic answers \hex{0x08}; if you see that, you have the wrong card and
+        nothing after this chapter will work.
+  \item \textbf{ATS} --- \hex{06} is its length, and the \hex{75} encodes
+        FSCI${}=5$, i.e.\ a 64-byte maximum frame.
+\end{itemize}
+
+\begin{trap}{The FSCI nibble}
+FSCI lives in one nibble of the ATS, and it is genuinely easy to read the wrong
+one --- the original C in this project had exactly that bug.
+
+Read the high nibble instead of the low and you conclude FSCI${}=7$, i.e.\
+``128-byte frames''. You then send a 100-byte APDU, and the card silently
+ignores it. Symptom: everything works until one particular command, which times
+out forever.
+\end{trap}
+
+\section{Traps}
+
+\begin{traptable}
+UID is 7 bytes but wrong in byte 0 & Did not skip the \hex{0x88} cascade tag. \\
+\code{select()} returns $-1$ & CRC wrong. Check \reg{ModeReg}$=$\hex{0x3D} (preset \hex{0x6363}). \\
+Anticollision always returns empty & Card not in READY --- call \code{isCardPresent()} first. \\
+\hex{SAK = 0x08} & It is a MIFARE Classic, not a DESFire. \\
+RATS returns empty & Card does not support 14443-4, or you sent RATS twice. \\
+Works, then fails on retry & Card left in ACTIVE. Power-cycle the field per transaction. \\
+\end{traptable}
+
+\section{Commit}
+
+\begin{shell}
+git add -A
+git commit -m "M5: activation -- anticollision, SELECT, cascade, RATS, ActivatedCard"
+\end{shell}
