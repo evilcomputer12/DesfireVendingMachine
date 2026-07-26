@@ -1,0 +1,254 @@
+\chapter{SSH keys, properly}
+\label{ch:sshkeys}
+
+\chapterbrief
+  {Replace the password with a key, and make \code{ssh brewer} work from anywhere on your network.}
+  {Public-key cryptography, from the user's side.}
+  {A one-word login, and no passwords in your workflow.}
+
+This is the chapter that changes how the rest of the project feels. Typing a
+password every time you deploy is not merely tedious --- it is the reason people
+stop deploying often, and deploying often is the entire point of
+Chapter~\ref{ch:deploy}.
+
+\section{What a key pair is}
+
+You generate two mathematically linked files:
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,
+   b/.style={rounded corners=2pt, inner sep=6pt, minimum width=44mm,
+             minimum height=13mm, align=center}]
+  \node[b, draw=brewerred, fill=brewerred!5] (priv)
+       {\textbf{private key}\\ \code{~/.ssh/id\_ed25519}\\[1pt]
+        {\scriptsize\itshape never leaves your laptop}};
+  \node[b, draw=brewergreen, fill=brewergreen!5, right=22mm of priv] (pub)
+       {\textbf{public key}\\ \code{~/.ssh/id\_ed25519.pub}\\[1pt]
+        {\scriptsize\itshape copy this anywhere}};
+  \draw[{Stealth[length=4pt]}-, brewergrey, dashed] (priv) -- node[above, font=\scriptsize\itshape, color=brewergrey] {derived from} (pub);
+  \node[b, draw=brewernavy, below=13mm of pub] (pi)
+       {\textbf{the Pi}\\ \code{~/.ssh/authorized\_keys}};
+  \draw[-{Stealth[length=4pt]}, brewergreen] (pub) -- node[right, font=\scriptsize\itshape, color=brewergrey] {copied to} (pi);
+\end{tikzpicture}
+\end{center}
+
+\begin{analogy}{A padlock you hand out freely}
+The \textbf{public key} is an open padlock. You can make unlimited copies and
+leave them anywhere --- on the Pi, on GitHub, on a colleague's server. A padlock
+is not a secret.
+
+The \textbf{private key} is the only key that opens those padlocks. It stays in
+one place and is never copied, never emailed, never pasted into a chat.
+
+When you connect, the Pi holds up your padlock and says ``prove you can open
+this''. Your laptop proves it \emph{without ever sending the key} --- and that
+is the same trick, mathematically, that the DESFire card uses in Volume One,
+Chapter 10. You are about to use challenge--response before you implement it.
+\end{analogy}
+
+\section{Generate the key}
+
+\begin{shell}
+# on your laptop
+ssh-keygen -t ed25519 -C "martin@laptop"
+\end{shell}
+
+Three questions:
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[File to save the key] Press Enter for the default,
+        \code{\textasciitilde/.ssh/id\_ed25519}. Only change it if you already
+        have a key you want to keep.
+  \item[Passphrase] Press Enter twice for none, \emph{or} set one --- see the
+        box below.
+  \item[Same again] Confirm.
+\end{description}
+
+\begin{trace}
+Your identification has been saved in /Users/martin/.ssh/id_ed25519
+Your public key has been saved in /Users/martin/.ssh/id_ed25519.pub
+The key fingerprint is:
+SHA256:xK3f...9dQ martin@laptop
+\end{trace}
+
+\begin{concept}{\texttt{ed25519}, and passphrases}
+\textbf{Why ed25519 and not RSA?} It is a modern elliptic-curve algorithm:
+shorter keys, faster, and no key-size decision to get wrong. Use RSA only if you
+must talk to something ancient.
+
+\textbf{Should you set a passphrase?} It encrypts the private key on disk, so a
+stolen laptop does not hand over your servers. The cost is typing it --- but your
+operating system's keychain remembers it after the first use, so in practice you
+type it once per reboot.
+
+For a home Pi with nothing valuable on it, no passphrase is a defensible choice.
+For the key you will put on GitHub in Chapter~\ref{ch:git}, set one.
+\end{concept}
+
+\section{Copy the public key to the Pi}
+
+\begin{shell}
+ssh-copy-id martin@brewer.local
+\end{shell}
+
+It asks for your Pi password one last time, then:
+
+\begin{trace}
+Number of key(s) added: 1
+
+Now try logging into the machine, with:   "ssh 'martin@brewer.local'"
+\end{trace}
+
+Test it:
+
+\begin{shell}
+ssh martin@brewer.local
+\end{shell}
+
+\textbf{No password.} That is the whole point.
+
+\subsection*{If \texttt{ssh-copy-id} is missing (some macOS setups)}
+
+\begin{shell}
+brew install ssh-copy-id
+
+# or do it by hand -- this is exactly what the tool does:
+cat ~/.ssh/id_ed25519.pub | ssh martin@brewer.local \
+  "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+   cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+\end{shell}
+
+\begin{trap}{SSH refuses keys if the permissions are loose}
+\code{\textasciitilde/.ssh} must be \code{700} and \code{authorized\_keys} must
+be \code{600}. If they are group- or world-writable, the SSH server silently
+ignores the key and falls back to asking for a password.
+
+Silently is the operative word: no error, no log line you would notice, just a
+password prompt that should not be there. If keys ``do not work'' and you have
+checked everything else, check permissions:
+
+\begin{shell}
+# on the Pi
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+\end{shell}
+\end{trap}
+
+\section{The config file: \texttt{ssh brewer}}
+
+Typing \code{martin@brewer.local} forever is unnecessary. On your laptop, create
+\code{\textasciitilde/.ssh/config}:
+
+\begin{shell}
+nano ~/.ssh/config
+\end{shell}
+
+\begin{trace}
+Host brewer
+    HostName brewer.local
+    User martin
+    IdentityFile ~/.ssh/id_ed25519
+
+    # Keep the connection alive through Wi-Fi hiccups instead of
+    # dropping you mid-deploy.
+    ServerAliveInterval 30
+    ServerAliveCountMax 6
+\end{trace}
+
+\begin{shell}
+chmod 600 ~/.ssh/config
+ssh brewer
+\end{shell}
+
+That is it. One word.
+
+\begin{concept}{Why this is more than a shortcut}
+\code{\textasciitilde/.ssh/config} is read by \emph{everything} that uses SSH ---
+\code{scp}, \code{rsync}, \code{git}, and the deploy scripts in
+Chapter~\ref{ch:deploy}. Define \code{brewer} once and it works everywhere:
+
+\begin{shell}
+scp file.txt brewer:~
+rsync -a target/classes/ brewer:midnight-brewer/target/classes/
+\end{shell}
+
+It also means that when your Pi's address changes, you edit \emph{one line}
+instead of hunting through scripts.
+
+If mDNS is unreliable on your network, put the IP in \code{HostName} instead ---
+everything else keeps working unchanged. That indirection is the real value.
+\end{concept}
+
+\section{Turn off password logins}
+
+Now that keys work, close the door behind you.
+
+\begin{shell}
+# on the Pi
+sudo nano /etc/ssh/sshd_config
+\end{shell}
+
+Find and set these three (they may exist commented out with a \code{\#} ---
+remove it):
+
+\begin{trace}
+PasswordAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+\end{trace}
+
+Save (Ctrl-O, Enter), exit (Ctrl-X), then:
+
+\begin{shell}
+sudo systemctl restart ssh
+\end{shell}
+
+\begin{trap}{Keep your current session open}
+\textbf{Do not close your SSH window until you have proved a new one works.}
+
+Open a \emph{second} terminal and run \code{ssh brewer}. If it lets you in, you
+are safe. If it does not, you still have the first window to undo the change.
+
+If you close everything and locked yourself out, the recovery is physical: power
+off, put the SD card in your laptop, and edit the config on the boot partition
+--- or just re-flash. Not fatal, but a genuinely annoying half hour.
+\end{trap}
+
+Why bother, on a home network? Because a Pi with password login and a weak
+password is exactly what automated scanners look for, and because the habit
+matters more than this one machine.
+
+\section{Useful SSH tricks}
+
+\begin{shell}
+# run one command without opening a shell
+ssh brewer 'uptime'
+
+# copy a file over
+scp notes.txt brewer:~
+
+# copy a whole folder back
+scp -r brewer:~/logs ./logs
+
+# see what SSH is actually doing, when it misbehaves
+ssh -v brewer
+\end{shell}
+
+\code{ssh -v} is the diagnostic. It prints every step --- which key it offered,
+what the server said --- and it is how you find out that the server ignored your
+key because of file permissions.
+
+\begin{checkpoint}{Keys work, passwords are off}
+\begin{shell}
+# from your laptop, in a NEW terminal
+ssh brewer 'hostname && whoami'
+\end{shell}
+
+\begin{trace}
+brewer
+martin
+\end{trace}
+
+No password prompt, one word to connect, and the command ran remotely. You are
+now set up better than most working developers.
+\end{checkpoint}

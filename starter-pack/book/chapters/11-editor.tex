@@ -1,0 +1,135 @@
+\chapter{An editor that helps}
+\label{ch:editor}
+
+\chapterbrief
+  {Set up an editor that understands Java, so mistakes surface as you type.}
+  {What a language server does for you.}
+  {Autocomplete, red squiggles, and jump-to-definition.}
+
+\section{Why this matters more in Java than in C}
+
+Java is verbose, and a good editor absorbs most of that verbosity: it writes the
+imports, completes the method names, and underlines the type error before you
+compile.
+
+Without one, you will spend a real fraction of Volume One fixing errors an editor
+would have shown you as you typed. With one, Java stops feeling wordy.
+
+\section{VS Code, the pragmatic default}
+
+Free, works everywhere, and its remote-SSH support is genuinely excellent.
+
+\begin{enumerate}
+  \item Install from \code{code.visualstudio.com}.
+  \item Open the Extensions panel (the four-squares icon) and install
+        \textbf{Extension Pack for Java} by Microsoft. That single pack pulls in
+        the language server, debugger, Maven and test support.
+  \item Open your project: \textbf{File $\rightarrow$ Open Folder}
+        $\rightarrow$ \code{\textasciitilde/midnight-brewer}.
+\end{enumerate}
+
+The first time it opens a Java project it spends a minute indexing. Let it.
+
+\subsection*{What you get}
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.30\linewidth}L{0.62\linewidth}@{}}
+\toprule
+\thead{Feature} & \thead{Why it matters here} \\
+\midrule
+Red squiggles      & Type errors before you run \code{mvn}. \\
+Ctrl-Space         & Completes method names --- and shows what a class offers, which is how you learn an unfamiliar API. \\
+F12 / Ctrl-click   & Jump to a definition. Invaluable when reading Pi4J. \\
+Ctrl-Shift-O       & Auto-add missing imports. \\
+Run / Debug lens   & A clickable \emph{Run} above every \code{main} and every \code{@Test}. \\
+Breakpoints        & Stop mid-execution and inspect variables. Debugging the crypto in Volume One will feel very different with these. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{concept}{What a ``language server'' is}
+The intelligence is not in the editor. It is a separate program --- for Java,
+Eclipse JDT --- that parses your project, understands the types, and answers
+questions like \emph{``what methods does this variable have?''}
+
+The editor just displays those answers. The same server backs VS Code, Vim and
+Emacs, which is why the experience is comparable across all three now.
+
+It also explains a common confusion: the language server has its own view of your
+project, so occasionally it disagrees with Maven. When errors look impossible,
+\textbf{Ctrl-Shift-P $\rightarrow$ ``Java: Clean Java Language Server
+Workspace''} resolves most of it.
+\end{concept}
+
+\section{Editing files on the Pi}
+
+Two approaches, and the first is better than it sounds.
+
+\subsection{Edit locally, deploy (recommended)}
+
+Your code lives on your laptop, git-tracked, in a proper editor. The Pi only ever
+receives compiled output. That is what Chapter~\ref{ch:deploy} set up, and it is
+the right default: the Pi holds no state you would cry about losing.
+
+\subsection{Remote-SSH, for config files}
+
+Sometimes you need to edit something that only exists on the Pi ---
+\code{/etc/ssh/sshd\_config}, a systemd unit. Install the \textbf{Remote --- SSH}
+extension, then:
+
+\textbf{Ctrl-Shift-P} $\rightarrow$ \emph{Remote-SSH: Connect to Host}
+$\rightarrow$ \code{brewer}
+
+It reuses your \code{\textasciitilde/.ssh/config}, so the alias you made in
+Chapter~\ref{ch:sshkeys} appears in the list. You now have a full editor running
+against the Pi's filesystem.
+
+\begin{trap}{Remote-SSH on a Zero 2 W}
+VS Code installs a server component on the Pi, and on 512\,MB it is heavy ---
+sometimes heavy enough to trigger the out-of-memory killer, which takes
+\code{sshd} with it.
+
+Use it for quick config edits, not as your main workspace. If the Pi becomes
+unresponsive after connecting, that is what happened; power-cycle and prefer
+\code{nano} over SSH for small edits.
+\end{trap}
+
+\section{If you prefer IntelliJ IDEA}
+
+The Community Edition is free and is, for Java specifically, better than VS Code
+--- stronger refactoring, better test integration, a nicer debugger.
+
+Open the project by selecting \code{pom.xml} and choosing \emph{Open as
+Project}. It has no remote-SSH equivalent, but with the deploy loop you barely
+need one.
+
+Either is fine. Do not spend an evening choosing.
+
+\section{Settings worth changing immediately}
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[Show whitespace] Makes stray tabs visible. \emph{Editor: Render
+        Whitespace $\rightarrow$ boundary}.
+  \item[Rulers at 80 and 100] A visual reminder to keep lines readable.
+        \code{"editor.rulers": [80, 100]}.
+  \item[Format on save] Consistent formatting, zero effort.
+  \item[Font size] If you plan to film any of this, \textbf{16--18\,pt
+        minimum}. Nobody can read your normal size on a phone.
+\end{description}
+
+\begin{checkpoint}{The editor understands your project}
+Open \code{ToolchainCheck.java} and:
+
+\begin{enumerate}
+  \item Type \code{System.out.} --- a completion list appears.
+  \item Delete a semicolon --- a red squiggle appears immediately, before any
+        build.
+  \item Put it back, then click \emph{Run} above \code{main} --- output appears
+        in a panel.
+  \item Open \code{ToolchainCheckTest.java} and click \emph{Run Test} --- three
+        green ticks.
+\end{enumerate}
+
+If completions do not appear, the language server has not finished indexing, or
+it failed to import the Maven project. Reload the window and give it a minute.
+\end{checkpoint}

@@ -1,0 +1,199 @@
+\chapter{The project skeleton}
+\label{ch:project}
+
+\chapterbrief
+  {Copy the template, build it, run its tests --- all on your laptop.}
+  {What Maven's folder layout means, and why it is not negotiable.}
+  {\code{Tests run: 3, Failures: 0}.}
+
+\section{Copy the template}
+
+\begin{shell}
+# on your laptop
+cp -r starter-pack/template ~/midnight-brewer
+cd ~/midnight-brewer
+ls -la
+\end{shell}
+
+\section{Build it before you change anything}
+
+\begin{shell}
+mvn test
+\end{shell}
+
+The first run downloads dependencies and takes a minute or two. Afterwards it is
+seconds.
+
+\begin{trace}
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+\end{trace}
+
+\begin{trap}{Read the number, not the word}
+\code{BUILD SUCCESS} with \emph{Tests run: 0} is also a success, and it means
+your tests are not being found at all.
+
+This is the single most common silent failure in Java projects: a misplaced test
+folder, a class not ending in \code{Test}, an old Surefire version that cannot
+see JUnit 5. Everything looks green and nothing is verified.
+
+\textbf{Always check the count.} Here it must say 3.
+\end{trap}
+
+\section{What is in the folder}
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\ttfamily, node distance=0mm,
+  f/.style={anchor=west, inner sep=1.5pt},
+  c/.style={anchor=west, inner sep=1.5pt, font=\footnotesize\sffamily\itshape,
+            color=brewergrey}]
+  \def\y{0}
+  \node[f] at (0,0.0)   {midnight-brewer/};
+  \node[f] at (0.4,-0.5) {pom.xml};
+    \node[c] at (4.6,-0.5) {what to build, which libraries};
+  \node[f] at (0.4,-1.0) {Makefile};
+    \node[c] at (4.6,-1.0) {the commands you type};
+  \node[f] at (0.4,-1.5) {.gitignore};
+    \node[c] at (4.6,-1.5) {keeps target/ out of git};
+  \node[f] at (0.4,-2.0) {README.md};
+    \node[c] at (4.6,-2.0) {how to use it};
+  \node[f] at (0.4,-2.5) {scripts/};
+  \node[f] at (0.9,-3.0) {pi-bootstrap.sh};
+    \node[c] at (4.6,-3.0) {run once, on the Pi};
+  \node[f] at (0.9,-3.5) {deploy.sh};
+    \node[c] at (4.6,-3.5) {build here, copy there};
+  \node[f] at (0.9,-4.0) {run.sh};
+    \node[c] at (4.6,-4.0) {run a class on the Pi};
+  \node[f] at (0.4,-4.5) {src/main/java/...};
+    \node[c] at (4.6,-4.5) {your program};
+  \node[f] at (0.4,-5.0) {src/test/java/...};
+    \node[c] at (4.6,-5.0) {your tests};
+  \node[f] at (0.4,-5.5) {target/};
+    \node[c] at (4.6,-5.5) {build output -- never edited, never committed};
+\end{tikzpicture}
+\end{center}
+
+\begin{concept}{Why \texttt{src/main/java} and not something shorter}
+Maven follows \emph{convention over configuration}: it knows where sources live,
+so you never write it down.
+
+Put a file in the wrong place and it is silently not compiled --- no error, it
+simply does not exist as far as the build is concerned. That is the trade: total
+consistency across every Maven project in the world, at the cost of paths being
+fixed.
+
+The package \code{com.midnightbrewer.diag} must map to the folder
+\code{src/main/java/com/midnightbrewer/diag/}. Not similar --- identical.
+\end{concept}
+
+\section{Run the toolchain check}
+
+\begin{shell}
+mvn -q compile
+java -cp target/classes com.midnightbrewer.ToolchainCheck
+\end{shell}
+
+\begin{trace}
+=== toolchain check ===
+java.version    = 21.0.11
+os.name         = Mac OS X
+os.arch         = aarch64
+major version   = 21
+sanity          = 0x92 (146)
+
+  -> toolchain OK. Nothing above needed hardware.
+\end{trace}
+
+\begin{concept}{What \texttt{-cp} means}
+\code{-cp} is the \emph{classpath}: where Java looks for compiled classes.
+
+\code{target/classes} is where Maven put your compiled code. Later you will use
+\code{-cp "target/classes:target/dependency/*"} to include the library jars as
+well --- the colon separates entries, and the \code{*} means ``every jar in that
+folder''.
+
+Most ``\code{ClassNotFoundException}'' and ``\code{NoClassDefFoundError}''
+problems are a classpath missing an entry, not a missing file.
+\end{concept}
+
+\section{Read the test}
+
+Open \code{src/test/java/com/midnightbrewer/ToolchainCheckTest.java}. One test
+is worth understanding now, because it encodes the mistake you are most likely
+to make in Volume One:
+
+\begin{jcode}
+@Test
+void signedByteMaskingWorks() {
+    byte b = (byte) 0x92;
+
+    assertEquals(-110, b, "a signed byte holding 0x92 reads as -110");
+    assertEquals(146, b & 0xFF, "masked with 0xFF it reads as 146");
+}
+\end{jcode}
+
+Java's \code{byte} is signed and there is no \code{unsigned} keyword. \hex{0x92}
+has its top bit set, so read as a number it is $-110$. The idiom \code{\& 0xFF}
+promotes to \code{int} and strips the sign extension.
+
+You will forget this at least once. Everyone does.
+
+\section{The Makefile}
+
+\begin{shell}
+make            # lists every target
+\end{shell}
+
+\begin{trace}
+Midnight Brewer -- available targets:
+
+  build        compile locally
+  test         run the tests locally
+  deploy       build + copy classes to the Pi
+  run          run MAIN on the Pi
+  probe        run the RC522 wiring probe on the Pi
+  pi-setup     copy + run the one-time Pi bootstrap script
+  ssh          open a shell on the Pi
+\end{trace}
+
+\begin{concept}{Why a Makefile and not just typing the commands}
+Because you will type these hundreds of times, and because six months from now
+\code{make deploy} still works when you have forgotten the rsync flags.
+
+A Makefile is executable documentation. The commands are recorded in the
+repository, they are the same for everyone, and \code{make} with no arguments
+tells you what is available --- which is more than most projects manage.
+\end{concept}
+
+\section{Point it at your Pi}
+
+\begin{shell}
+export PI=martin@brewer
+\end{shell}
+
+Add that to \code{\textasciitilde/.zshrc} or \code{\textasciitilde/.bashrc} so it
+survives a new terminal. It uses the \code{brewer} alias from your
+\code{\textasciitilde/.ssh/config}.
+
+\section{Commit it}
+
+Now do Chapter~\ref{ch:git} if you have not:
+
+\begin{shell}
+git init
+git add .
+git commit -m "chore: project skeleton from the starter pack"
+\end{shell}
+
+\begin{checkpoint}{The project builds}
+\begin{shell}
+cd ~/midnight-brewer
+mvn test
+make
+\end{shell}
+
+\code{Tests run: 3, Failures: 0}, and \code{make} lists its targets.
+
+No hardware has been involved yet. That is the point: when something breaks in
+Volume One, you already know the toolchain is not the problem.
+\end{checkpoint}

@@ -1,0 +1,205 @@
+\chapter{Git and GitHub}
+\label{ch:git}
+
+\chapterbrief
+  {Put your work under version control and back it up.}
+  {Commits as save points; SSH keys, a second time.}
+  {\code{git push} working with no password.}
+
+\section{Why bother, on a solo project}
+
+Three reasons, and only the first is the obvious one.
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[Backup.] SD cards die. Laptops get spilled on.
+  \item[Undo.] Not \code{Ctrl-Z} undo --- \emph{``the reader worked on Tuesday
+        and does not now''} undo. Git can show you exactly what changed between
+        Tuesday and today.
+  \item[A record of your reasoning.] In Volume One each chapter ends with a
+        commit. Six months later, \code{git log} is a narrative of what you built
+        and in what order --- which is worth more than you expect when you come
+        back to it, or film it.
+\end{description}
+
+\begin{analogy}{Save points, not autosave}
+A word processor autosaves continuously; you cannot go back to ``before I
+rewrote that section''.
+
+Git is save points in a game. \emph{You} decide when a moment is worth marking,
+and you name it. ``M2: driver reads the version register'' is a save point you
+can return to, compare against, or branch from.
+
+The skill is choosing when to save: after something works, before something
+risky.
+\end{analogy}
+
+\section{Start the repository}
+
+You will do this inside the project folder from Chapter~\ref{ch:project}. If you
+have not created it yet, come back after that chapter.
+
+\begin{shell}
+# on your laptop, inside the project folder
+git init
+git status
+\end{shell}
+
+\code{git status} is the command you will run most. It answers: what have I
+changed, and what is staged?
+
+\section{Your first commit}
+
+\begin{shell}
+git add .                 # stage everything not ignored
+git status                # confirm what is staged -- always look
+git commit -m "chore: project skeleton from the starter pack"
+git log --oneline
+\end{shell}
+
+\begin{concept}{Why two steps, \texttt{add} then \texttt{commit}}
+\code{add} stages changes; \code{commit} records what is staged.
+
+The separation exists so you can commit \emph{part} of your work. You fixed a
+bug and also renamed a variable; those are two different stories, and staging
+lets you tell them separately.
+
+At first, \code{git add .} then \code{git commit} is fine. Later, \code{git add
+-p} steps through each change and asks whether to include it --- and that is when
+the two-step design starts earning its keep.
+\end{concept}
+
+\subsection*{Commit messages that help later}
+
+A convention worth adopting, because it makes \code{git log} scannable:
+
+\begin{trace}
+feat:  a new capability          feat: read the card UID
+fix:   a bug fixed               fix: skip the 0x88 cascade tag
+chore: housekeeping              chore: add .gitignore
+docs:  documentation             docs: explain the FIFO wait loop
+test:  tests only                test: RFC 4493 vectors for CMAC
+\end{trace}
+
+Write the message as the completion of \emph{``this commit will\ldots''} ---
+present tense, imperative. \code{fix: skip the cascade tag}, not \code{fixed the
+cascade tag}.
+
+\begin{trap}{What must never be committed}
+\code{.gitignore} in the starter pack already excludes \code{target/} and common
+secret filenames. Two habits on top of that:
+
+\begin{itemize}
+  \item \textbf{Never commit a private key.} \code{id\_ed25519} stays in
+        \code{\textasciitilde/.ssh/}, never in a project.
+  \item \textbf{Never commit a password.} Not in a config file, not in a
+        comment, not ``temporarily''.
+\end{itemize}
+
+Git history is permanent. Deleting a secret in a later commit does \emph{not}
+remove it --- it is still there in the history, and if you pushed it publicly,
+assume it is compromised and rotate it.
+\end{trap}
+
+\section{GitHub}
+
+Create an account at \code{github.com} if you do not have one, then a new
+repository: \textbf{New} $\rightarrow$ name it \code{midnight-brewer}
+$\rightarrow$ \textbf{Private} $\rightarrow$ and \textbf{do not} tick any of
+``add a README / .gitignore / licence'' (you already have files; those options
+create a conflicting first commit).
+
+\subsection{An SSH key for GitHub}
+
+You can push over HTTPS with a token, but SSH is less friction and you already
+know how it works.
+
+\begin{shell}
+# on your laptop -- reuse the key you already made
+cat ~/.ssh/id_ed25519.pub
+\end{shell}
+
+Copy the whole line (it starts \code{ssh-ed25519} and ends with your comment).
+In GitHub: \textbf{Settings} $\rightarrow$ \textbf{SSH and GPG keys}
+$\rightarrow$ \textbf{New SSH key}, paste, save.
+
+Test:
+
+\begin{shell}
+ssh -T git@github.com
+\end{shell}
+
+\begin{trace}
+Hi evilcomputer12! You've successfully authenticated,
+but GitHub does not provide shell access.
+\end{trace}
+
+That message is success --- GitHub is not supposed to give you a shell.
+
+\begin{concept}{The same padlock, a second lock}
+This is the identical key pair from Chapter~\ref{ch:sshkeys}. You handed a copy
+of the public half to your Pi; now you have handed another copy to GitHub.
+
+One private key, many places that recognise it. That is the whole model, and it
+is why the private key never moving matters: it is the single thing whose
+compromise would unlock everything at once.
+\end{concept}
+
+\section{Push}
+
+\begin{shell}
+git remote add origin git@github.com:YOURNAME/midnight-brewer.git
+git branch -M main
+git push -u origin main
+\end{shell}
+
+\begin{trace}
+Enumerating objects: 14, done.
+Writing objects: 100% (14/14), 3.21 KiB | 3.21 MiB/s, done.
+To github.com:YOURNAME/midnight-brewer.git
+ * [new branch]      main -> main
+branch 'main' set up to track 'origin/main'.
+\end{trace}
+
+Refresh the GitHub page --- your files are there.
+
+The \code{-u} sets \code{origin/main} as the default, so from now on it is just:
+
+\begin{shell}
+git push
+\end{shell}
+
+\section{The loop you will actually use}
+
+\begin{shell}
+git status                    # what changed?
+git diff                      # show me the actual changes
+git add -A                    # stage everything
+git commit -m "feat: ..."     # save point
+git push                      # back it up
+\end{shell}
+
+And two that save you:
+
+\begin{shell}
+git log --oneline -10         # last ten save points
+git diff HEAD~1               # what changed in the last commit
+git checkout -- file.java     # throw away my changes to this file
+\end{shell}
+
+\begin{trap}{\texttt{git checkout -{}-} is destructive}
+That last command discards your uncommitted changes to that file,
+\emph{permanently}. There is no undo, because the changes were never recorded.
+
+That is precisely why you commit often: committed work can always be recovered;
+uncommitted work is one careless command from gone.
+\end{trap}
+
+\begin{checkpoint}{Your code is backed up}
+\begin{shell}
+git log --oneline
+git push
+\end{shell}
+
+At least one commit exists, \code{push} reports \emph{Everything up-to-date},
+and you can see your files on github.com.
+\end{checkpoint}

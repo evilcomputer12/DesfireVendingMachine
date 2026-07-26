@@ -1,0 +1,146 @@
+\chapter{Flashing the Pi, headless}
+\label{ch:flashing}
+
+\chapterbrief
+  {Write an operating system to the SD card, pre-configured so the Pi joins your Wi-Fi and accepts SSH on first boot.}
+  {Headless setup --- no monitor, no keyboard, ever.}
+  {A Pi that boots and appears on your network.}
+
+\section{Headless means no screen}
+
+You are never going to plug a monitor into this Pi. Instead you configure it
+\emph{before} first boot, and from then on you reach it over the network.
+
+\begin{analogy}{Setting up a phone before you unbox it}
+Imagine you could type your Wi-Fi password and set your account name into a
+phone \emph{before} it first powered on --- so that the moment it boots it is
+already on your network and already yours.
+
+That is what the Raspberry Pi Imager's settings do. The alternative is finding a
+spare HDMI cable, a keyboard, and somewhere to put them.
+\end{analogy}
+
+\section{Raspberry Pi Imager}
+
+Download it from \code{raspberrypi.com/software} and install it. It runs on
+macOS, Windows and Linux.
+
+Insert your SD card, open Imager, and make three choices:
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[Device] Your Pi model --- e.g.\ \emph{Raspberry Pi Zero 2 W}.
+  \item[Operating System] \textbf{Raspberry Pi OS Lite (64-bit)}, under
+        \emph{Raspberry Pi OS (other)}.
+  \item[Storage] Your SD card. \textbf{Read this twice.}
+\end{description}
+
+\begin{trap}{Imager will happily erase the wrong disk}
+It writes to whatever you select and does not undo. Before clicking, confirm the
+\emph{size} matches your SD card --- a 32\,GB entry is your card, a 1\,TB entry
+is your laptop.
+
+Unplug other external drives while you do this. People have lost backups here.
+\end{trap}
+
+\begin{concept}{Why ``Lite'', and why 64-bit}
+\textbf{Lite} means no desktop environment. You do not need one --- you will use
+SSH --- and on a 512\,MB Zero 2 W a desktop consumes memory your builds need.
+
+\textbf{64-bit} matters because the Java 21 packages are better supported there,
+and the JVM performs measurably better.
+
+(Volume One's kiosk chapter does need a graphical desktop. You will install just
+the pieces required at that point, rather than carrying a full desktop through
+every chapter before it.)
+\end{concept}
+
+\section{The settings screen --- the important part}
+
+Before writing, click the \textbf{gear icon} (or answer \emph{``Would you like to
+apply OS customisation settings?''} with \textbf{Edit Settings}).
+
+\subsection*{General tab}
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.30\linewidth}L{0.62\linewidth}@{}}
+\toprule
+\thead{Field} & \thead{Set it to} \\
+\midrule
+Set hostname & \code{brewer} \newline
+  {\small This is how you will address the Pi: \code{brewer.local}. Pick
+   something short you will not mistype.} \\
+Set username and password & Username \code{martin} (or yours), and a real
+  password. \newline
+  {\small You will only type this password a handful of times before
+   Chapter~\ref{ch:sshkeys} replaces it with a key.} \\
+Configure wireless LAN & Your Wi-Fi name (SSID) and password, and your
+  \textbf{Wireless LAN country} --- required, or Wi-Fi stays off. \\
+Set locale settings & Your timezone and keyboard layout. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{trap}{The Zero 2 W is 2.4\,GHz only}
+It cannot see a 5\,GHz network. If your router presents both bands under
+different names, enter the \textbf{2.4\,GHz} one.
+
+If both bands share one name, it usually still works --- but ``the Pi never
+appears on the network'' with correct-looking settings is very often this.
+\end{trap}
+
+\subsection*{Services tab}
+
+\textbf{Enable SSH}, and choose \textbf{Use password authentication} for now.
+You will switch to keys in Chapter~\ref{ch:sshkeys}.
+
+\begin{concept}{What SSH is}
+\emph{Secure Shell}: a program that gives you a terminal on another machine over
+the network, with everything encrypted in transit.
+
+When you type \code{ssh martin@brewer.local}, you get a shell prompt on the Pi.
+Commands you type run \emph{there}. It is the single most important tool in
+embedded Linux work, and Chapter~\ref{ch:sshkeys} is entirely about making it
+pleasant.
+\end{concept}
+
+\section{Write it}
+
+Click \textbf{Save}, then \textbf{Write}, and confirm. It takes a few minutes ---
+it writes, then verifies.
+
+When it finishes, macOS may complain that ``the disk you inserted was not
+readable''. \textbf{That is normal}: the card now has a Linux filesystem your
+laptop cannot read. Eject it and ignore the warning.
+
+\section{First boot}
+
+\begin{enumerate}
+  \item Put the SD card in the Pi.
+  \item On a Zero 2 W, plug power into the port marked \textbf{PWR IN} --- the
+        one nearer the corner. The other is USB data and will not power it.
+  \item Wait. \textbf{First boot takes two to three minutes} --- it resizes the
+        filesystem and reboots itself once.
+\end{enumerate}
+
+The green LED tells you what is happening: irregular flickering is disk
+activity, which is good. A steady green light with no flicker for several
+minutes usually means it has not booted.
+
+\begin{checkpoint}{The Pi is on the network}
+From your laptop:
+
+\begin{shell}
+ping brewer.local
+\end{shell}
+
+\begin{trace}
+PING brewer.local (192.168.1.42): 56 data bytes
+64 bytes from 192.168.1.42: icmp_seq=0 ttl=64 time=4.331 ms
+\end{trace}
+
+Ctrl-C to stop. Note the IP address --- you may need it in the next chapter.
+
+\textbf{If it does not answer}, wait a full three minutes and try again before
+troubleshooting. If it still fails, go to Chapter~\ref{ch:contact}, which is
+entirely about finding a Pi that will not answer to its name.
+\end{checkpoint}

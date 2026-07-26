@@ -1,0 +1,88 @@
+\chapter*{Before you start}
+\addcontentsline{toc}{chapter}{Before you start}
+\markboth{\textsc{Before you start}}{}
+
+Most project tutorials open with ``first, set up your environment'' and then
+spend one paragraph on something that will actually take you two evenings and
+teach you a dozen things you will use for the rest of your life.
+
+This book is that paragraph, expanded honestly.
+
+\section*{What you will have at the end}
+
+\begin{itemize}
+  \item A Raspberry Pi you can reach by typing \code{ssh brewer} --- no
+        password, no IP address to remember, from anywhere on your network.
+  \item A Java project that compiles on your laptop and runs on the Pi one
+        second later.
+  \item Your code in git, backed up on GitHub, pushed with one command.
+  \item An NFC reader wired up and answering.
+\end{itemize}
+
+None of that is specific to this project. Change the word ``NFC'' and you have
+the setup for any embedded Linux work you will ever do.
+
+\section*{Who this is for}
+
+Someone who has written some C, can use a text editor, and has never done any of
+the following: used SSH, generated a key pair, used git beyond \code{git clone},
+run Maven, or set up a headless Linux machine.
+
+If you have done all of those, read Chapter~\ref{ch:need} for the hardware
+choices, skim Appendix~\ref{app:cheat}, and go straight to Volume One.
+
+\section*{How this book is different from a wiki page}
+
+\textbf{Everything is explained, not just listed.} You will not be told to run
+\code{ssh-keygen -t ed25519} and left to wonder what happened. You will be told
+what a key pair \emph{is}, why the private one never moves, and what would
+actually go wrong if you skipped it.
+
+That matters because setup steps are exactly the ones you cannot debug by
+reading your own code. When SSH refuses you at midnight, understanding
+\emph{why} it wants what it wants is the difference between five minutes and an
+evening.
+
+\begin{concept}{Checkpoints}
+Each chapter ends with a \textbf{checkpoint}: a command to run, and the output
+you should see.
+
+\textbf{Do not continue past a failed checkpoint.} Setup problems compound
+viciously --- a half-configured SSH key produces errors three chapters later
+that look nothing like SSH.
+\end{concept}
+
+\section*{Conventions}
+
+Commands are shown with a comment saying \emph{where} to run them, because half
+of all setup confusion is running the right command on the wrong machine:
+
+\begin{shell}
+# on your laptop
+ssh brewer
+
+# on the Pi
+ls -l /dev/spidev0.0
+\end{shell}
+
+\begin{itemize}
+  \item \code{\$USER}, \code{martin}, \code{brewer.local} --- replace with your
+        own username and hostname. The book uses \code{martin} and
+        \code{brewer} throughout; pick your own in Chapter~\ref{ch:flashing}
+        and stay consistent.
+  \item \textcolor{brewerred}{Red rules} mark traps that have actually caught
+        people. \textcolor{brewerblue}{Blue} explains a concept.
+        \textcolor{breweramber}{Amber} is an analogy.
+        \textcolor{brewergreen}{Green} is a checkpoint.
+\end{itemize}
+
+\section*{If you get stuck}
+
+Appendix~\ref{app:trouble0} is indexed by \textbf{what you see on screen}, not by
+topic. Search for your error message there first --- almost every setup failure
+in this book has a known cause and a one-line fix.
+
+\vspace{1em}
+\begin{flushright}\itshape
+Nothing here is hard. Some of it is just unfamiliar.
+\end{flushright}

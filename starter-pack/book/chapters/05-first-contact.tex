@@ -1,0 +1,168 @@
+\chapter{First contact}
+\label{ch:contact}
+
+\chapterbrief
+  {Find the Pi and log into it.}
+  {Hostnames, mDNS, DHCP --- how machines find each other.}
+  {A shell prompt that says \code{martin@brewer}.}
+
+\section{Log in}
+
+\begin{shell}
+# on your laptop
+ssh martin@brewer.local
+\end{shell}
+
+The first time, you get this:
+
+\begin{trace}
+The authenticity of host 'brewer.local (192.168.1.42)' can't be established.
+ED25519 key fingerprint is SHA256:xK3f...9dQ.
+Are you sure you want to continue connecting (yes/no/[fingerprint])?
+\end{trace}
+
+Type \textbf{\code{yes}} and press Enter. Then your password (it shows nothing as
+you type --- that is deliberate, not a broken keyboard).
+
+\begin{trace}
+martin@brewer:~ $
+\end{trace}
+
+That prompt means you are on the Pi. Everything you type now runs there.
+
+\begin{concept}{What that fingerprint question is}
+Every SSH server has its own identity key. The first time you connect, your
+computer has no way to know whether this is really your Pi or something
+pretending to be it, so it shows you the fingerprint and records your answer in
+\code{\textasciitilde/.ssh/known\_hosts}.
+
+From then on it checks silently. If the fingerprint ever \emph{changes}, SSH
+refuses to connect and warns loudly --- because that is what an impersonation
+attack looks like.
+
+On a home network, the realistic cause of that warning is that you reflashed the
+Pi (new key) or your router handed the address to a different device. See
+Appendix~\ref{app:trouble0} for the one-line fix --- and note that the fix is to
+remove the \emph{specific stale entry}, never to disable checking.
+\end{concept}
+
+\section{When \texttt{brewer.local} does not resolve}
+
+\code{.local} names use \textbf{mDNS} --- machines shouting ``I am brewer'' on
+the local network, with no central server. It works out of the box on macOS and
+most Linux, and on Windows 10+.
+
+When it fails, work down this list.
+
+\subsection{1. Is it a name problem or a network problem?}
+
+Find the Pi's IP from your router's admin page (usually
+\code{192.168.1.1} in a browser; look for ``connected devices'' or ``DHCP
+leases''). Then:
+
+\begin{shell}
+ssh martin@192.168.1.42
+\end{shell}
+
+If \textbf{that works}, the Pi is fine and only the name lookup is broken --- fix
+it with the \code{\textasciitilde/.ssh/config} entry in
+Chapter~\ref{ch:sshkeys}, which lets you type \code{ssh brewer} regardless.
+
+If \textbf{that fails too}, the Pi is not on the network. Continue.
+
+\subsection{2. Scan the network}
+
+\begin{shell}
+# macOS / Linux -- find your own address first
+ipconfig getifaddr en0        # macOS
+hostname -I                   # Linux
+
+# then scan that subnet for open SSH ports
+nmap -p 22 --open 192.168.1.0/24
+\end{shell}
+
+Install \code{nmap} with \code{brew install nmap} or \code{sudo apt install
+nmap}. Any device answering on port 22 is running SSH; if you only have one Pi,
+that is it.
+
+\subsection{3. Still nothing}
+
+In order of likelihood:
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.42\linewidth}L{0.50\linewidth}@{}}
+\toprule
+\thead{Cause} & \thead{Check} \\
+\midrule
+Wi-Fi credentials wrong & Re-flash the card with Imager, retyping the SSID and password carefully. Both are case-sensitive. \\
+5\,GHz network selected & A Zero 2 W cannot see 5\,GHz. Use the 2.4\,GHz SSID. \\
+Wireless country not set & Imager's \emph{Wireless LAN country} is required; without it the radio stays off. \\
+SSH not enabled & Services tab in Imager. Easy to miss. \\
+Power & Undervoltage. Try a different supply \emph{and} cable. \\
+Card not written & Imager reported an error, or you ejected early. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{trap}{Re-flashing is faster than diagnosing}
+If the Pi has never appeared, do not spend an hour on it. Re-flash with Imager,
+type the Wi-Fi details slowly, and try again. It takes five minutes, and it fixes
+the great majority of never-appeared cases.
+
+Diagnosis is worth it once the Pi has worked at least once --- then you know the
+hardware is good and something specific changed.
+\end{trap}
+
+\section{Look around}
+
+You are logged in. Confirm what you are on:
+
+\begin{shell}
+# on the Pi
+hostname                              # brewer
+whoami                                # martin
+cat /proc/device-tree/model; echo     # Raspberry Pi Zero 2 W Rev 1.0
+free -h                               # memory: total / used / free
+df -h /                               # disk space
+uname -m                              # aarch64  <- 64-bit, as intended
+ip addr show wlan0 | grep 'inet '     # your IP address
+\end{shell}
+
+Two things worth noting now:
+
+\code{free -h} on a Zero 2 W shows about 420\,MB available. That is why
+Chapter~\ref{ch:pisetup} adds swap and Chapter~\ref{ch:deploy} builds on your
+laptop.
+
+\code{uname -m} must say \code{aarch64}. If it says \code{armv7l} you flashed the
+32-bit image --- workable, but re-flash with the 64-bit one now rather than
+later.
+
+To leave:
+
+\begin{shell}
+exit          # or Ctrl-D
+\end{shell}
+
+\section{DHCP, and why the address moves}
+
+Your router hands out addresses on a lease. When the lease expires, or the Pi
+reboots, or another device claims it first, the Pi can get a \emph{different}
+address.
+
+That is why this book uses \code{brewer.local} rather than a number. If mDNS is
+unreliable on your network, the durable fix is a \textbf{static DHCP lease} (also
+called an address reservation) in your router: find the Pi in the device list and
+tick ``always give this device this address''. Takes a minute, and it is worth
+doing before you start filming or demoing anything.
+
+\begin{checkpoint}{You can log in}
+\begin{shell}
+ssh martin@brewer.local
+hostname
+exit
+\end{shell}
+
+You reached a prompt, it printed \code{brewer}, and you got back out. You typed a
+password to do it --- that is what the next chapter fixes.
+\end{checkpoint}

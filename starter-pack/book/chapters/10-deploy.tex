@@ -1,0 +1,179 @@
+\chapter{The deploy loop}
+\label{ch:deploy}
+
+\chapterbrief
+  {Build on your laptop, run on the Pi, in about five seconds.}
+  {Why the feedback loop's length decides how you work.}
+  {\code{make deploy \&\& make run} as one reflex.}
+
+\section{The loop is the thing}
+
+How long it takes to see the effect of a change determines how you behave.
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.16\linewidth}L{0.76\linewidth}@{}}
+\toprule
+\thead{Loop} & \thead{How you end up working} \\
+\midrule
+5 s   & Try it. Wrong? Change one thing, try again. You experiment. \\
+40 s  & You batch up three changes to avoid the wait --- and when it fails you no longer know which one did it. \\
+3 min & You stop running it. You read the code and \emph{reason}, which is far more error-prone than looking. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The middle row is the dangerous one, because it feels productive.
+
+\begin{analogy}{Tasting while you cook}
+A cook tastes constantly --- a pinch of salt, taste, another pinch. Small
+corrections, immediate feedback.
+
+Now imagine each taste took three minutes. You would salt once, hopefully, and
+find out at the table. That is what a slow build does to programming: it turns
+tasting into guessing.
+\end{analogy}
+
+\section{Why not just build on the Pi?}
+
+You could. \code{git push} from the laptop, \code{git pull} on the Pi, \code{mvn
+compile}. It works, and on a Zero 2 W it takes roughly forty seconds.
+
+The trick is that \textbf{Java bytecode is architecture-independent}. A
+\code{.class} file compiled on your laptop --- x86 or Apple Silicon, does not
+matter --- runs unchanged on the Pi's ARM chip. The JVM is the portability layer.
+
+So: compile on the fast machine, copy the output to the slow one.
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,
+  b/.style={draw=brewernavy, rounded corners=2pt, minimum width=30mm,
+            minimum height=8mm, inner sep=3pt}]
+  \node[b] (l) {laptop: \code{mvn compile}};
+  \node[b, right=20mm of l] (r) {Pi: \code{java -cp ...}};
+  \draw[-{Stealth[length=4pt]}, brewergreen, line width=1pt] (l) --
+     node[above, font=\scriptsize\sffamily, color=brewergreen] {rsync}
+     node[below, font=\scriptsize\itshape, color=brewergrey] {only changed bytes} (r);
+  \node[font=\scriptsize\itshape, color=brewergrey, below=1mm of l] {2 s};
+  \node[font=\scriptsize\itshape, color=brewergrey, below=1mm of r] {instant};
+\end{tikzpicture}
+\end{center}
+
+\section{One-time: the dependency jars}
+
+Your code needs Pi4J and SLF4J at runtime. Those jars change only when
+\code{pom.xml} changes, so copy them once:
+
+\begin{shell}
+# on your laptop, in the project
+make deploy-full
+\end{shell}
+
+That builds, resolves the dependency jars into \code{target/dependency/}, and
+copies both to the Pi.
+
+\section{Every time after that}
+
+\begin{shell}
+make deploy
+make run
+\end{shell}
+
+\begin{trace}
+==> building locally
+==> copying classes to martin@brewer:~/midnight-brewer
+==> done
+=== toolchain check ===
+java.version    = 21.0.11
+os.arch         = aarch64            <- note: you are on the Pi now
+major version   = 21
+  -> toolchain OK.
+\end{trace}
+
+That \code{os.arch = aarch64} is the proof: you compiled on your laptop and the
+result ran on ARM.
+
+To run something else:
+
+\begin{shell}
+make run MAIN=com.midnightbrewer.diag.SpiProbe
+# or equivalently
+./scripts/run.sh com.midnightbrewer.diag.SpiProbe
+\end{shell}
+
+\section{What the scripts actually do}
+
+Worth reading once, so they are not magic.
+
+\subsection*{\texttt{deploy.sh}}
+
+\begin{shell}
+mvn -q -DskipTests compile
+rsync -a --delete target/classes/ "$PI:midnight-brewer/target/classes/"
+\end{shell}
+
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[\code{-DskipTests}] tests already ran on your laptop; running them again
+        on the Pi would be slow and pointless.
+  \item[\code{rsync -a}] archive mode: recursive, preserves timestamps and
+        permissions.
+  \item[\code{-{}-delete}] remove files on the Pi that no longer exist locally.
+        Without it, a class you renamed lingers over there --- and stale classes
+        produce genuinely baffling behaviour.
+  \item[the trailing slashes] \code{target/classes/} means \emph{the contents
+        of}. Without the slash rsync would create
+        \code{classes/classes/}. This bites everyone once.
+\end{description}
+
+\subsection*{\texttt{run.sh}}
+
+\begin{shell}
+ssh -t "$PI" "cd ~/midnight-brewer && java -cp 'target/classes:target/dependency/*' $MAIN"
+\end{shell}
+
+\code{-t} forces a terminal, so \textbf{Ctrl-C reaches the program on the Pi}
+instead of only killing your local ssh client and leaving the program running
+over there. Without it you accumulate orphaned processes holding the SPI device,
+and the next run fails with a resource-busy error you will not understand.
+
+\begin{trap}{Stale classes}
+If you change a file and behaviour does not change, suspect stale output before
+suspecting anything else.
+
+\begin{shell}
+mvn clean compile && make deploy-full
+\end{shell}
+
+The symptom is unmistakable once you know it: the code in front of you
+\emph{cannot} produce the output you are seeing.
+\end{trap}
+
+\section{The rhythm}
+
+\begin{shell}
+# edit code in your editor
+mvn test                 # fast, local, no hardware
+make deploy && make run  # on the real thing
+\end{shell}
+
+Most of your loop is the middle line. The bottom line is for when you need
+actual hardware --- and by Volume One, Chapter 1, you will have arranged for that
+to be as rarely as possible.
+
+\begin{checkpoint}{The loop works}
+\begin{shell}
+make deploy-full
+make run
+\end{shell}
+
+You see the toolchain check, printed by the Pi, reporting \code{aarch64}.
+
+Now change one line in \code{ToolchainCheck.java} --- add a
+\code{System.out.println("hello from the loop");} --- and run:
+
+\begin{shell}
+make deploy && make run
+\end{shell}
+
+Your new line appears. Time it: it should be around five seconds. That number is
+what the rest of the project will feel like.
+\end{checkpoint}

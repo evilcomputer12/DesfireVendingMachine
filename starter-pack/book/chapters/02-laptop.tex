@@ -1,0 +1,189 @@
+\chapter{Your laptop}
+\label{ch:laptop}
+
+\chapterbrief
+  {Install Java, Maven and git, and prove each one works.}
+  {Package managers, and why version numbers matter here.}
+  {Three commands that print version numbers.}
+
+Everything in this chapter happens on \textbf{your own computer}, not the Pi.
+
+\section{A package manager first}
+
+Installing software by downloading installers from websites is how you end up
+with three Javas and no idea which one runs. Use a package manager: one command
+to install, one to update, one to remove.
+
+\subsection*{macOS --- Homebrew}
+
+\begin{shell}
+# on your laptop
+/bin/bash -c "$(curl -fsSL \
+  https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+\end{shell}
+
+It will ask for your password and print a couple of commands to run afterwards
+(adding \code{brew} to your \code{PATH}) --- \textbf{actually run them}, then
+close and reopen your terminal.
+
+\subsection*{Linux (Debian/Ubuntu)}
+
+Already installed: \code{apt}.
+
+\subsection*{Windows}
+
+Two options, and this one genuinely matters:
+
+\begin{trap}{Use WSL2, not native Windows}
+Install \textbf{WSL2 with Ubuntu} (\code{wsl --install} in an Administrator
+PowerShell, then reboot). Do all your work inside that Ubuntu.
+
+Native Windows will fight you on line endings, file permissions, SSH paths and
+shell scripts --- four separate categories of confusion that have nothing to do
+with what you are trying to learn. Inside WSL2, every command in this book works
+exactly as printed.
+
+Keep your project files under the Linux home directory (\code{\textasciitilde/})
+and \emph{not} under \code{/mnt/c/}, or filesystem performance will be dreadful.
+\end{trap}
+
+\section{Java 21}
+
+\begin{shell}
+# macOS
+brew install openjdk@21
+
+# Debian / Ubuntu / WSL2
+sudo apt update && sudo apt install -y openjdk-21-jdk
+\end{shell}
+
+On macOS, Homebrew does not link the JDK where the system expects it. Run the
+command it prints, which looks like:
+
+\begin{shell}
+sudo ln -sfn /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk \
+             /Library/Java/JavaVirtualMachines/openjdk-21.jdk
+\end{shell}
+
+Verify:
+
+\begin{shell}
+java -version
+\end{shell}
+
+\begin{trace}
+openjdk version "21.0.11" 2026-04-21
+OpenJDK Runtime Environment (build 21.0.11+10)
+OpenJDK 64-Bit Server VM (build 21.0.11+10, mixed mode)
+\end{trace}
+
+\begin{concept}{Why 21 specifically}
+Java 21 is a \emph{Long Term Support} release, and it has one feature this
+project uses constantly: \code{HexFormat}, for parsing and printing hexadecimal
+without pulling in a library.
+
+Java 17 would mostly work. Java 11 will not compile the code in Volume One.
+Newer than 21 is fine.
+
+If \code{java -version} shows something older, you have two Javas installed and
+the wrong one is first in your \code{PATH} --- see
+Appendix~\ref{app:trouble0}.
+\end{concept}
+
+\section{Maven}
+
+\begin{shell}
+# macOS
+brew install maven
+
+# Debian / Ubuntu / WSL2
+sudo apt install -y maven
+\end{shell}
+
+\begin{shell}
+mvn -v
+\end{shell}
+
+\begin{trace}
+Apache Maven 3.9.6
+Maven home: /opt/homebrew/Cellar/maven/3.9.6/libexec
+Java version: 21.0.11, vendor: Homebrew
+\end{trace}
+
+Check that ``Java version'' line --- Maven has its own idea of which Java to use,
+and if it says 17 while \code{java -version} says 21, Maven wins and your build
+will behave unexpectedly.
+
+\begin{analogy}{What Maven actually does}
+Think of \code{pom.xml} as a shopping list plus a recipe.
+
+The shopping list is your dependencies: ``I need Pi4J version 3.0.2''. Maven
+fetches them from a central warehouse and caches them in
+\code{\textasciitilde/.m2/}, so the second build is offline and instant.
+
+The recipe is the build: compile these sources with this Java version, run these
+tests, put the output there. You do not write build steps; you declare what you
+want and Maven knows the order.
+
+The first build downloads a lot and feels slow. That is a one-time cost.
+\end{analogy}
+
+\section{git}
+
+\begin{shell}
+# macOS -- may already be present via Xcode tools
+brew install git
+
+# Debian / Ubuntu / WSL2
+sudo apt install -y git
+\end{shell}
+
+Tell git who you are. This goes into every commit you ever make, so use a real
+address:
+
+\begin{shell}
+git config --global user.name  "Your Name"
+git config --global user.email "you@example.com"
+
+# Name the default branch 'main' -- matches GitHub and this book
+git config --global init.defaultBranch main
+
+# Show the config you just set
+git config --global --list
+\end{shell}
+
+\begin{trap}{Your commit email becomes public}
+If you push to a public GitHub repository, every commit shows the email you set
+here, forever, in the git history. It is not editable after the fact without
+rewriting history.
+
+If that bothers you, GitHub can give you a private no-reply address: find it
+under \emph{Settings $\rightarrow$ Emails} and use that instead. Set it now
+rather than discovering it in six months.
+\end{trap}
+
+\section{One more useful tool}
+
+\code{rsync} copies files efficiently --- only the parts that changed. You will
+use it in Chapter~\ref{ch:deploy} to push builds to the Pi.
+
+\begin{shell}
+# macOS: already installed
+# Debian / Ubuntu / WSL2
+sudo apt install -y rsync
+
+rsync --version | head -1
+\end{shell}
+
+\begin{checkpoint}{All four tools}
+\begin{shell}
+java -version     # 21.x
+mvn -v            # 3.9.x, reporting Java 21
+git --version     # 2.x
+rsync --version   # 3.x
+\end{shell}
+
+All four print a version. None says ``command not found''. If Maven reports a
+different Java version than \code{java -version} does, fix that now ---
+Appendix~\ref{app:trouble0} has the two-line solution.
+\end{checkpoint}

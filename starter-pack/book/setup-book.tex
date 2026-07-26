@@ -1,0 +1,144 @@
+% ============================================================
+%  THE MIDNIGHT BREWER -- VOLUME ZERO
+%  Setting Everything Up
+%
+%  Build:  make      (or: latexmk -pdf setup-book.tex)
+% ============================================================
+\documentclass[11pt,twoside,openright]{book}
+
+\input{preamble}
+
+% Volume 0 adds one more callout: a "you should now see this" checkpoint.
+\newtcolorbox{checkpoint}[1]{enhanced,breakable,colback=brewergreen!5,
+  borderline west={2.6pt}{0pt}{brewergreen},frame hidden,arc=0pt,boxrule=0pt,
+  left=10pt,right=10pt,top=8pt,bottom=8pt,
+  title={\sffamily\bfseries\small\color{brewergreen}CHECKPOINT\quad#1},
+  attach title to upper={\par\vspace{3pt}},colframe=brewergreen}
+
+\begin{document}
+
+% ============================================================
+\frontmatter
+% ============================================================
+
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+\vspace*{0.7in}
+
+{\sffamily\fontsize{15}{18}\selectfont\color{brewergrey}
+ THE\quad MIDNIGHT\quad BREWER\quad$\cdot$\quad VOLUME ZERO\par}
+
+\vspace{0.45in}
+{\color{brewernavy}\rule{3.1in}{1.1pt}}\par
+\vspace{0.30in}
+
+{\sffamily\bfseries\fontsize{33}{38}\selectfont\color{brewernavy}
+ Setting\\[3pt] Everything\\[3pt] Up\par}
+
+\vspace{0.28in}
+{\color{brewernavy}\rule{3.1in}{1.1pt}}\par
+\vspace{0.34in}
+
+{\fontsize{13}{18}\selectfont\itshape
+ From a blank SD card to a Raspberry Pi that\\
+ answers over SSH, builds Java, and talks\\ to an NFC reader.\par}
+
+\vspace{0.5in}
+
+% --- laptop -> ssh -> pi vignette ---
+\begin{tikzpicture}[scale=1.0, font=\sffamily\tiny]
+  % laptop
+  \draw[brewernavy, line width=0.9pt, rounded corners=1pt] (0,0.55) rectangle (1.9,1.75);
+  \draw[brewernavy, line width=0.9pt] (-0.25,0.35) -- (2.15,0.35) -- (1.9,0.55) -- (0,0.55) -- cycle;
+  \node[color=brewergrey] at (0.95,0.15) {your laptop};
+  % ssh arrow
+  \draw[-{Stealth[length=4pt]}, brewergreen, line width=0.9pt] (2.35,1.1) -- (4.15,1.1);
+  \node[color=brewergreen, above] at (3.25,1.16) {ssh};
+  % pi
+  \draw[brewernavy, line width=0.9pt, rounded corners=2pt] (4.35,0.55) rectangle (6.0,1.75);
+  \foreach \i in {0,...,9}{ \fill[brewergrey!60] (4.5+0.13*\i,1.62) circle (0.9pt); }
+  \node[color=brewergrey] at (5.18,0.15) {Raspberry Pi};
+  % spi arrow
+  \draw[-{Stealth[length=4pt]}, breweramber, line width=0.9pt] (6.2,1.1) -- (7.3,1.1);
+  \node[color=breweramber!80!black, above] at (6.75,1.16) {SPI};
+  % reader
+  \draw[breweramber, line width=0.9pt, rounded corners=2pt] (7.5,0.6) rectangle (8.9,1.65);
+  \foreach \i in {0,1}{
+    \draw[breweramber!50, line width=0.5pt, rounded corners=1pt]
+      (7.65+0.1*\i,0.78+0.09*\i) rectangle (8.75-0.1*\i,1.5-0.09*\i); }
+  \node[color=brewergrey] at (8.2,0.15) {RC522};
+\end{tikzpicture}
+
+\vfill
+{\sffamily\small\color{brewergrey}
+ Read this one first\par}
+\vspace{6pt}
+{\sffamily\footnotesize\color{brewergrey} Revision \today\par}
+\end{titlepage}
+
+\cleardoublepage
+\thispagestyle{empty}
+\vspace*{\fill}
+{\small
+\textbf{The Midnight Brewer, Volume Zero: Setting Everything Up}\par
+\vspace{8pt}
+This is the prequel. It assumes you have never used a Raspberry Pi, never
+generated an SSH key, and have never run \code{mvn} in your life. It ends with a
+Pi you can reach by name, a project that builds, and an NFC reader that
+answers.\par
+\vspace{10pt}
+\textbf{Volume One} --- \emph{Building a Contactless Payment Terminal From
+Scratch} --- picks up exactly where this stops, and is where you start writing
+code.\par
+\vspace{10pt}
+\textbf{Every command in this book is meant to be typed.} Where output is shown,
+it is what you should actually see. Where it differs, the troubleshooting
+appendix is indexed by symptom.\par
+}
+\vspace*{\fill}
+
+\cleardoublepage
+\tableofcontents
+
+\cleardoublepage
+\input{chapters/preface}
+
+% ============================================================
+\mainmatter
+% ============================================================
+
+\part{Your Machine}
+\input{chapters/01-what-you-need}
+\input{chapters/02-laptop}
+\input{chapters/03-terminal}
+
+\part{The Pi}
+\input{chapters/04-flashing}
+\input{chapters/05-first-contact}
+\input{chapters/06-ssh-keys}
+\input{chapters/07-pi-setup}
+
+\part{The Workflow}
+\input{chapters/08-git}
+\input{chapters/09-project}
+\input{chapters/10-deploy}
+\input{chapters/11-editor}
+
+\part{The Hardware}
+\input{chapters/12-wiring}
+
+% ============================================================
+\appendix
+\part{Appendices}
+\input{appendices/A-cheatsheet}
+\input{appendices/B-troubleshooting}
+
+% ============================================================
+\backmatter
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Index}
+\printindex
+
+\end{document}

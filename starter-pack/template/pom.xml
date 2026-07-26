@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Midnight Brewer: project skeleton.
+
+  Everything here is explained in Chapter 9 of the setup book. The short
+  version: this file tells Maven what Java version to use, what libraries to
+  download, and how to run the tests.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Change these two if you rename the project. groupId is conventionally
+       your reverse domain name; if you do not have one, anything unique works. -->
+  <groupId>com.midnightbrewer</groupId>
+  <artifactId>MidnightBrewer</artifactId>
+  <version>1.0-SNAPSHOT</version>
+
+  <properties>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <pi4j.version>3.0.2</pi4j.version>
+    <junit.version>5.10.2</junit.version>
+  </properties>
+
+  <dependencies>
+    <!-- ============================================================
+         Pi4J: Java access to the Raspberry Pi's SPI bus and GPIO pins.
+         Three artefacts, because Pi4J splits "the API" from "the thing
+         that actually talks to Linux".
+         ============================================================ -->
+    <dependency>
+      <groupId>com.pi4j</groupId>
+      <artifactId>pi4j-core</artifactId>
+      <version>${pi4j.version}</version>
+    </dependency>
+
+    <!-- The SPI provider: talks to /dev/spidev0.0 through the filesystem. -->
+    <dependency>
+      <groupId>com.pi4j</groupId>
+      <artifactId>pi4j-plugin-linuxfs</artifactId>
+      <version>${pi4j.version}</version>
+    </dependency>
+
+    <!-- The GPIO provider, for the reset pin. -->
+    <dependency>
+      <groupId>com.pi4j</groupId>
+      <artifactId>pi4j-plugin-gpiod</artifactId>
+      <version>${pi4j.version}</version>
+    </dependency>
+
+    <!-- Pi4J logs through SLF4J. Without a binding on the classpath it prints
+         a warning at every startup; this is the simplest one that works. -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>2.0.13</version>
+    </dependency>
+
+    <!-- ============================================================
+         JUnit 5, for tests.
+
+         scope=test means: available when compiling and running tests, NOT
+         shipped with the application. It also enforces the boundary: if you
+         accidentally 'import org.junit' in main code, the build fails.
+         ============================================================ -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- Surefire is the plugin that actually runs your tests. Maven's
+           bundled version is too old for JUnit 5, so we pin a newer one. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -1,0 +1,195 @@
+\chapter{Enough terminal to be dangerous}
+\label{ch:terminal}
+
+\chapterbrief
+  {The dozen commands this book actually uses.}
+  {Paths, permissions, and where you are.}
+  {Confidence that you cannot break anything by accident.}
+
+Skip this chapter if \code{cd}, \code{ls}, \code{chmod +x} and \code{sudo} are
+already reflexes. Otherwise it is fifteen minutes that will save you hours.
+
+\section{Where am I?}
+
+The shell always has a \emph{current directory}. Almost every confusing error in
+setup work comes from being somewhere you did not think you were.
+
+\begin{shell}
+pwd                 # print working directory -- where am I?
+ls                  # list files here
+ls -la              # ... including hidden ones, with details
+cd ~/projects       # change directory
+cd ..               # up one level
+cd -                # back to where I just was
+\end{shell}
+
+\begin{concept}{The three special paths}
+\begin{description}[leftmargin=0pt, style=nextline]
+  \item[\code{\textasciitilde}] your home directory. On the Pi that is
+        \code{/home/martin}; on macOS \code{/Users/martin}.
+  \item[\code{.}] here, the current directory. \code{./script.sh} means ``the
+        script in \emph{this} folder'' --- as opposed to a command found on your
+        \code{PATH}.
+  \item[\code{..}] one level up.
+\end{description}
+
+A path starting with \code{/} is \emph{absolute} --- it means the same thing from
+anywhere. Anything else is \emph{relative} to where you currently are, which is
+why \code{pwd} is the first thing to check when a command cannot find a file.
+\end{concept}
+
+\section{Looking at files}
+
+\begin{shell}
+cat file.txt              # dump the whole thing
+less file.txt             # page through it (q to quit, / to search)
+head -20 file.txt         # first 20 lines
+tail -20 file.txt         # last 20 lines
+tail -f logfile           # follow it live -- Ctrl-C to stop
+grep "error" file.txt     # lines containing "error"
+grep -rn "TODO" src/      # search a whole tree, with line numbers
+\end{shell}
+
+\code{tail -f} is how you watch a program's log while it runs. You will use it in
+Volume One when the kiosk misbehaves.
+
+\section{Editing on the Pi}
+
+You need one editor that works over SSH. \code{nano} is the least painful:
+
+\begin{shell}
+nano ~/.bashrc
+\end{shell}
+
+Arrow keys move. \textbf{Ctrl-O then Enter} saves. \textbf{Ctrl-X} exits. Those
+two shortcuts are all you need, and they are printed at the bottom of the screen
+--- where \code{\^{}O} means Ctrl-O.
+
+\begin{trap}{If you find yourself in \texttt{vi}}
+Some commands (notably \code{git commit} with no \code{-m}) open a full-screen
+editor that ignores everything you type. That is \code{vim}, and it is modal.
+
+To escape: press \textbf{Escape}, then type \textbf{\code{:q!}} and press Enter.
+That quits without saving.
+
+To make git use nano instead, permanently:
+\begin{shell}
+git config --global core.editor nano
+\end{shell}
+\end{trap}
+
+\section{Permissions, and \texttt{chmod +x}}
+
+Every file carries permissions: who may read it, write it, and \emph{execute} it.
+
+\begin{shell}
+ls -l scripts/deploy.sh
+\end{shell}
+
+\begin{trace}
+-rwxr-xr-x  1 martin  staff  1204 Jul 26 14:02 scripts/deploy.sh
+ ^^^
+ owner may read, write, execute
+\end{trace}
+
+A shell script without the execute bit gives you \code{Permission denied} even
+though you can plainly read it. Fix:
+
+\begin{shell}
+chmod +x scripts/deploy.sh
+\end{shell}
+
+\begin{trap}{Scripts lose the execute bit in transit}
+Copy a script through a zip file, a Windows filesystem, or some cloud drives and
+the execute bit is silently dropped.
+
+If a script you \emph{know} is fine says \code{Permission denied}, run
+\code{chmod +x} on it before suspecting anything else. Git does preserve the
+bit, which is one more reason to use git.
+\end{trap}
+
+\section{\texttt{sudo}, and when not to use it}
+
+\code{sudo} runs one command as the administrator. Installing packages and
+editing system configuration need it. \textbf{Your own project files never do.}
+
+\begin{trap}{Never \texttt{sudo} a build}
+If you run \code{sudo mvn compile} even once, the files in \code{target/} end up
+owned by root. Your normal user then cannot overwrite them, so the \emph{next}
+build fails with a permission error --- and the obvious-looking fix is more
+\code{sudo}, which digs the hole deeper.
+
+If it has already happened:
+\begin{shell}
+sudo chown -R $USER:$USER ~/midnight-brewer
+\end{shell}
+\end{trap}
+
+\section{Keys that save you}
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.22\linewidth}L{0.70\linewidth}@{}}
+\toprule
+\thead{Key} & \thead{Does} \\
+\midrule
+\textbf{Tab} & Completes file and command names. Press it constantly. It is also how you check a path exists before pressing Enter. \\
+\textbf{Up arrow} & Previous command. Edit and re-run rather than retyping. \\
+\textbf{Ctrl-C} & Stop the running program. \\
+\textbf{Ctrl-D} & End of input --- also logs you out of SSH. \\
+\textbf{Ctrl-R} & Search your command history. Type a few letters of a command you ran last week. \\
+\textbf{Ctrl-A / Ctrl-E} & Jump to start / end of the line. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{concept}{Tab completion is a correctness tool}
+It is not just about typing speed. If Tab does not complete a filename, that
+file \emph{does not exist} where you think it does --- and you have found a bug
+before running anything.
+
+Beginners type full paths and get ``No such file or directory''. Experienced
+people press Tab, see nothing happen, and immediately run \code{ls}.
+\end{concept}
+
+\section{Environment variables}
+
+A variable your shell passes to programs it runs. This book uses one:
+
+\begin{shell}
+export PI=martin@brewer.local     # set it for this session
+echo $PI                          # read it back
+\end{shell}
+
+\code{export} only lasts until you close the terminal. To make it permanent, add
+the line to your shell's startup file:
+
+\begin{shell}
+# which shell am I using?
+echo $SHELL
+
+# zsh (macOS default)
+echo 'export PI=martin@brewer.local' >> ~/.zshrc
+
+# bash (most Linux, WSL2)
+echo 'export PI=martin@brewer.local' >> ~/.bashrc
+\end{shell}
+
+Then open a new terminal, or run \code{source \textasciitilde/.zshrc} to apply
+it now.
+
+\begin{checkpoint}{Prove the basics}
+\begin{shell}
+cd ~
+pwd                       # prints your home directory
+mkdir -p projects/test
+cd projects/test
+echo "hello" > file.txt
+cat file.txt              # prints: hello
+ls -l                     # shows file.txt with its permissions
+cd ~
+rm -rf ~/projects/test    # clean up
+\end{shell}
+
+If all of that worked and you understand what each line did, you know enough
+terminal for this entire book.
+\end{checkpoint}

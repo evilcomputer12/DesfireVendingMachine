@@ -1,0 +1,181 @@
+\chapter{Cheat sheet}
+\label{app:cheat}
+
+One page per topic. Photocopy, print, or keep the PDF open on a second screen.
+
+\section{The daily loop}
+
+\begin{shell}
+mvn test                      # fast, local, no hardware
+make deploy && make run       # onto the real Pi
+make probe                    # is the reader still alive?
+git add -A && git commit -m "feat: ..." && git push
+\end{shell}
+
+\section{SSH}
+
+\begin{shell}
+ssh brewer                          # log in (alias from ~/.ssh/config)
+ssh brewer 'uptime'                 # run one command, come straight back
+ssh -v brewer                       # verbose -- diagnose auth failures
+exit                                # or Ctrl-D
+
+scp file.txt brewer:~               # copy a file over
+scp -r brewer:~/logs ./logs         # copy a folder back
+rsync -a --delete src/ brewer:dst/  # mirror a folder (note trailing slashes)
+\end{shell}
+
+\subsection*{\texttt{\textasciitilde/.ssh/config}}
+
+\begin{trace}
+Host brewer
+    HostName brewer.local
+    User martin
+    IdentityFile ~/.ssh/id_ed25519
+    ServerAliveInterval 30
+    ServerAliveCountMax 6
+\end{trace}
+
+\subsection*{Key setup, from scratch}
+
+\begin{shell}
+ssh-keygen -t ed25519 -C "martin@laptop"    # once, ever
+ssh-copy-id martin@brewer.local             # once per machine
+chmod 700 ~/.ssh && chmod 600 ~/.ssh/*      # if keys are ignored
+\end{shell}
+
+\section{Git}
+
+\begin{shell}
+git status                    # what changed?
+git diff                      # show the actual changes
+git diff --staged             # ... that are staged
+git add -A                    # stage everything
+git add -p                    # stage interactively, hunk by hunk
+git commit -m "feat: ..."     # save point
+git push                      # back it up
+git log --oneline -10         # last ten commits
+git log --oneline -- path/to/File.java     # history of one file
+git show HEAD                 # what was in the last commit
+git checkout -- file.java     # DISCARD my changes to this file
+git reset --soft HEAD~1       # undo the last commit, keep the changes
+git stash / git stash pop     # shelve work temporarily
+\end{shell}
+
+\subsection*{Message prefixes}
+
+\begin{trace}
+feat:   a new capability
+fix:    a bug fixed
+chore:  housekeeping, build, dependencies
+docs:   documentation
+test:   tests only
+\end{trace}
+
+\section{Maven}
+
+\begin{shell}
+mvn test                      # compile + run tests
+mvn -q compile                # compile quietly
+mvn clean                     # delete target/
+mvn clean test                # when you suspect stale output
+mvn test -Dtest=FooTest       # one test class
+mvn dependency:copy-dependencies -DincludeScope=runtime
+mvn dependency:tree           # why is THAT jar on my classpath?
+\end{shell}
+
+\subsection*{Running things}
+
+\begin{shell}
+java -cp target/classes com.midnightbrewer.ToolchainCheck
+java -cp "target/classes:target/dependency/*" com.midnightbrewer.diag.SpiProbe
+\end{shell}
+
+\section{The Pi}
+
+\begin{shell}
+# identity and health
+hostname
+cat /proc/device-tree/model; echo
+free -h                       # memory
+df -h /                       # disk
+vcgencmd measure_temp         # temperature
+uptime                        # load and how long it has been up
+
+# hardware
+ls -l /dev/spidev0.0          # SPI device present?
+groups                        # am I in spi and gpio?
+lsmod | grep spi              # SPI kernel modules loaded
+
+# services and logs
+sudo systemctl status ssh
+journalctl -u ssh -n 50       # last 50 lines of a service's log
+journalctl -f                 # follow everything, live
+dmesg | tail -20              # kernel messages (undervoltage shows here)
+
+# packages
+sudo apt update && sudo apt full-upgrade -y
+sudo apt install -y <package>
+
+sudo reboot
+sudo shutdown -h now          # ALWAYS before touching wiring
+\end{shell}
+
+\section{Terminal}
+
+\begin{shell}
+pwd                     # where am I?
+ls -la                  # what is here, including hidden
+cd -                    # back to the previous directory
+find . -name "*.java"   # find files by name
+grep -rn "TODO" src/    # search a tree, with line numbers
+chmod +x script.sh      # make executable
+du -sh *                # what is taking up space
+history | grep ssh      # what was that command last week?
+\end{shell}
+
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Tab} & complete a name (and prove it exists) \\
+\textbf{Up} & previous command \\
+\textbf{Ctrl-R} & search history \\
+\textbf{Ctrl-C} & stop the running program \\
+\textbf{Ctrl-D} & end input / log out \\
+\textbf{Ctrl-A / Ctrl-E} & start / end of line \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Pin reference}
+
+\begin{center}\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\thead{RC522} & \thead{Pi pin} & \thead{BCM} & \thead{Function} \\
+\midrule
+\reg{3.3V} & 1  & --- & power (\textbf{never pin 2}) \\
+\reg{GND}  & 6  & --- & ground \\
+\reg{MOSI} & 19 & 10  & Pi $\rightarrow$ chip \\
+\reg{MISO} & 21 & 9   & chip $\rightarrow$ Pi \\
+\reg{RST}  & 22 & 25  & reset \\
+\reg{SCK}  & 23 & 11  & clock \\
+\reg{SDA}  & 24 & 8   & chip select (CE0) \\
+\reg{IRQ}  & --- & --- & not connected \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Values worth memorising}
+
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\hex{0x91} / \hex{0x92} & healthy RC522 version byte \\
+\hex{0x00} & MISO stuck low --- power or wiring \\
+\hex{0xFF} & MISO floating --- not connected \\
+\code{aarch64} & correct Pi architecture (64-bit) \\
+\code{Tests run: 3} & the starter pack's test count \\
+\bottomrule
+\end{tabular}
+\end{center}

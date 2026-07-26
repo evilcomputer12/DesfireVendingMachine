@@ -1,0 +1,201 @@
+\chapter{Preparing the Pi}
+\label{ch:pisetup}
+
+\chapterbrief
+  {Install Java and Maven, enable SPI, join the hardware groups, add swap.}
+  {Why a 512\,MB machine needs care.}
+  {A Pi that can build and run this project.}
+
+\section{The fast way}
+
+The starter pack ships a script that does everything in this chapter. Read the
+chapter anyway --- when something fails later you want to know what was done.
+
+\begin{shell}
+# on your laptop, from the template folder
+scp scripts/pi-bootstrap.sh brewer:~
+ssh brewer 'bash pi-bootstrap.sh'
+\end{shell}
+
+Then reboot and skip to the checkpoint:
+
+\begin{shell}
+ssh brewer 'sudo reboot'
+\end{shell}
+
+The rest of this chapter is the same work, done by hand.
+
+\section{Update first}
+
+\begin{shell}
+# on the Pi
+sudo apt update
+sudo apt full-upgrade -y
+\end{shell}
+
+On a Zero 2 W this takes a while on a fresh image. Let it finish.
+
+\begin{concept}{\texttt{update} versus \texttt{upgrade}}
+\code{apt update} refreshes the \emph{catalogue} --- what versions exist. It
+installs nothing.
+
+\code{apt upgrade} installs newer versions of what you already have.
+\code{full-upgrade} additionally allows removing packages when a dependency
+requires it, which is what you want on a fresh system.
+
+Running \code{upgrade} without \code{update} first is the most common apt
+mistake: it dutifully upgrades to the newest versions it knows about, which may
+be months old.
+\end{concept}
+
+\section{Java and Maven}
+
+\begin{shell}
+sudo apt install -y openjdk-21-jdk maven git rsync
+java -version
+mvn -v
+\end{shell}
+
+\begin{trace}
+openjdk version "21.0.11" 2026-04-21
+OpenJDK Runtime Environment (build 21.0.11+10-1-deb13u2-Debian)
+\end{trace}
+
+Maven on the Pi is used rarely --- Chapter~\ref{ch:deploy} builds on your laptop
+--- but it is needed once, to download the dependency jars.
+
+\section{Enable SPI}
+
+SPI is the bus the NFC reader speaks. It is off by default.
+
+\begin{shell}
+sudo raspi-config
+\end{shell}
+
+Navigate: \textbf{3 Interface Options} $\rightarrow$ \textbf{I4 SPI}
+$\rightarrow$ \textbf{Yes} $\rightarrow$ \textbf{Ok} $\rightarrow$
+\textbf{Finish}.
+
+Or without the menu:
+
+\begin{shell}
+sudo raspi-config nonint do_spi 0      # 0 means ENABLE, confusingly
+\end{shell}
+
+\section{Join the hardware groups}
+
+Linux does not let arbitrary programs poke hardware. Access is granted by group
+membership.
+
+\begin{shell}
+sudo usermod -aG spi,gpio $USER
+\end{shell}
+
+\begin{trap}{Group changes need a fresh login}
+Your current session still has your \emph{old} groups. Adding yourself to a group
+does nothing until you log out and back in --- and over SSH that means
+disconnecting, not just opening a new shell.
+
+This produces one of the most confusing errors in the whole setup: you ran the
+command, you can see the group in \code{/etc/group}, and the program still says
+\code{Permission denied}.
+
+\begin{shell}
+exit
+ssh brewer
+groups          # must now list: spi gpio
+\end{shell}
+\end{trap}
+
+\section{Swap, on a 512\,MB machine}
+
+A Zero 2 W has 512\,MB of RAM. A JVM plus Maven will exceed that, and when Linux
+runs out of memory the kernel starts killing processes --- frequently
+\code{sshd}, which locks you out until you power-cycle it.
+
+\begin{shell}
+free -h                    # check what you have
+
+sudo dphys-swapfile swapoff
+sudo nano /etc/dphys-swapfile
+\end{shell}
+
+Change \code{CONF\_SWAPSIZE=100} to \code{CONF\_SWAPSIZE=1024}, then:
+
+\begin{shell}
+sudo dphys-swapfile setup
+sudo dphys-swapfile swapon
+free -h                    # Swap: should now show ~1.0Gi
+\end{shell}
+
+\begin{concept}{Swap is a safety net, not speed}
+Swap is disk space used as overflow memory. Disk is thousands of times slower
+than RAM, so a machine actively swapping is a machine crawling.
+
+That is fine --- the goal is not performance, it is \emph{not dying}. Without
+swap, running out of memory kills your SSH session. With swap, it merely gets
+slow, and you can still type.
+
+On an SD card, heavy swapping does wear the card. Which is one more argument for
+building on your laptop.
+\end{concept}
+
+\section{Reboot and verify}
+
+\begin{shell}
+sudo reboot
+\end{shell}
+
+Wait thirty seconds, reconnect, and check everything:
+
+\begin{shell}
+ssh brewer
+
+ls -l /dev/spidev0.0        # the SPI device must exist
+groups                      # must include spi and gpio
+java -version               # 21.x
+free -h                     # swap around 1 GB
+uname -m                    # aarch64
+\end{shell}
+
+\begin{trace}
+crw-rw---- 1 root spi 153, 0 Jul 26 14:02 /dev/spidev0.0
+martin adm dialout cdrom sudo audio video plugdev games users input
+       render netdev spi gpio lpadmin
+\end{trace}
+
+Read that first line: the device is owned by group \code{spi}, and the group has
+read/write (\code{rw}). That is exactly why you needed the group membership.
+
+\section{One optional nicety}
+
+Give yourself a clock and a tidy history:
+
+\begin{shell}
+# on the Pi
+cat >> ~/.bashrc <<'EOF'
+
+# timestamps in history -- surprisingly useful when debugging
+export HISTTIMEFORMAT="%F %T  "
+export HISTSIZE=5000
+export HISTCONTROL=ignoredups
+
+# shortcuts
+alias ll='ls -alh'
+alias ..='cd ..'
+EOF
+
+source ~/.bashrc
+\end{shell}
+
+\begin{checkpoint}{The Pi is ready}
+\begin{shell}
+ssh brewer 'ls -l /dev/spidev0.0 && groups | tr " " "\n" | grep -E "^(spi|gpio)$" && java -version'
+\end{shell}
+
+You should see the SPI device, both groups, and Java 21.
+
+If \code{/dev/spidev0.0} does not exist, SPI is not enabled --- rerun
+\code{raspi-config} and \emph{reboot}. If the groups are missing, log out and
+back in.
+\end{checkpoint}

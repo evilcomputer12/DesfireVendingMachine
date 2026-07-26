@@ -1,0 +1,116 @@
+\chapter{What you need}
+\label{ch:need}
+
+\chapterbrief
+  {Buy the right things, once.}
+  {The decisions that are expensive to change later.}
+  {A shopping list and no regrets.}
+
+\section{The shopping list}
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.30\linewidth}L{0.42\linewidth}r@{}}
+\toprule
+\thead{Item} & \thead{Notes} & \thead{Approx.} \\
+\midrule
+Raspberry Pi Zero 2 W & Any Pi works. See below. & \pounds18 \\
+microSD card, 16\,GB+ & Class 10 / A1. A slow card makes everything feel broken. & \pounds8 \\
+USB power supply, 5\,V 2.5\,A & \textbf{Not} a phone charger you had lying around. & \pounds8 \\
+MFRC522 reader module & The ubiquitous red breakout board. & \pounds3 \\
+\textbf{MIFARE DESFire EV2/EV3} & \textbf{Buy two. See the warning.} & \pounds3 ea \\
+Female--female jumper wires & Get short ones, 10\,cm. Seriously. & \pounds3 \\
+7-inch touchscreen \emph{(optional)} & 1024$\times$600, HDMI $+$ USB touch. Volume One, Chapter 12. & \pounds45 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+You also need a computer (macOS, Linux or Windows), a home network with Wi-Fi,
+and an SD card reader.
+
+\begin{trap}{The card matters more than everything else combined}
+It must say \textbf{DESFire EV2} or \textbf{EV3}.
+
+\textbf{Not} MIFARE Classic --- broken crypto, completely different protocol.
+\textbf{Not} NTAG or Ultralight --- no crypto at all, no value files.
+\textbf{Not} ``13.56\,MHz RFID tag'' from a bag of a hundred on an auction site.
+
+If a listing says ``compatible'' or does not name the chip, it is not one.
+
+\textbf{Buy at least two.} One to develop against, one spare --- because in
+Volume One you will run a command that changes a key on the card, and a card
+whose key you have changed and forgotten is scrap. Permanently, by design.
+\end{trap}
+
+\section{Which Pi?}
+
+Any model with Wi-Fi works. The trade-off:
+
+\begin{center}\small
+\begin{tabular}{@{}L{0.24\linewidth}L{0.34\linewidth}L{0.34\linewidth}@{}}
+\toprule
+\thead{Model} & \thead{Good} & \thead{Annoying} \\
+\midrule
+Zero 2 W & Cheap, tiny, fits behind a screen & 512\,MB RAM; compiling on it is slow \\
+Pi 3 / 4 / 5 & Fast, plenty of RAM & Bigger, more power, more money \\
+Zero W (original) & Cheapest & Single core --- genuinely painful. Avoid. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This book assumes a \textbf{Zero 2 W}, because it is the one that forces you to
+do things properly: with 512\,MB you cannot be careless, and the workflow you
+learn in Chapter~\ref{ch:deploy} --- build on the laptop, run on the Pi ---
+is the right workflow on any hardware.
+
+Everything works unchanged on a Pi 4; you will just wait less.
+
+\begin{trap}{The power supply is not optional}
+A Pi that browns out does not politely stop. It corrupts the SD card, drops the
+network, and produces failures that look exactly like software bugs.
+
+If you see random reboots, a rainbow square in the corner, or ``undervoltage
+detected'' in \code{dmesg}, replace the supply before debugging anything else. A
+phone charger rated ``5\,V 2\,A'' often will not hold 5\,V under load, and the
+cable matters as much as the brick.
+\end{trap}
+
+\section{Wires: shorter than you think}
+
+Get \textbf{10\,cm female-to-female} jumpers. The 20\,cm ones that come in most
+kits are, at the 1\,MHz clock this project uses, genuinely unreliable --- and
+their failure mode is intermittent, which is the worst kind.
+
+\begin{analogy}{Shouting across a room}
+A short wire is a conversation at arm's length. A long, unshielded, loosely
+twisted jumper is shouting across a room with a fan running: most words arrive,
+some do not, and you cannot predict which.
+
+Digital signals do not degrade gracefully. A bit that arrives ambiguous is not
+``slightly wrong'' --- it is a different number.
+\end{analogy}
+
+You will meet this again in Appendix~\ref{app:trouble0}: \emph{version register
+reads a different value each run} is almost always wire length, and almost never
+code.
+
+\section{What you do not need}
+
+\begin{itemize}
+  \item \textbf{A monitor, keyboard or mouse for the Pi.} This book sets it up
+        \emph{headless} --- configured before first boot, reached over the
+        network. It is faster, and it is how real deployments work.
+  \item \textbf{A soldering iron.} The RC522 usually ships with header pins
+        already attached. If yours came with loose pins in a bag, you do need to
+        solder them, or buy one that is pre-soldered.
+  \item \textbf{An Arduino, a level shifter, or a breadboard.} The Pi's GPIO is
+        already 3.3\,V, which is what the RC522 wants.
+\end{itemize}
+
+\begin{checkpoint}{Before continuing}
+You have, physically in front of you: a Pi, an SD card, a power supply, an
+RC522, jumper wires, and at least one card that says \textbf{DESFire EV2} or
+\textbf{EV3} on the packaging.
+
+If the card is the only thing missing, carry on --- you will not need it until
+Chapter~\ref{ch:wiring}.
+\end{checkpoint}

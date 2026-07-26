@@ -1,0 +1,219 @@
+\chapter{When it does not work}
+\label{app:trouble0}
+
+Indexed by \textbf{what you see on screen}. Search for your error message here
+before searching the internet --- almost every setup failure has a known cause
+and a one-line fix.
+
+\section{First, three questions}
+
+Before diagnosing anything, answer these. They resolve most problems on their
+own.
+
+\begin{enumerate}
+  \item \textbf{Which machine am I on?} Run \code{hostname}. Half of all setup
+        confusion is the right command on the wrong machine.
+  \item \textbf{Where am I?} Run \code{pwd}. The other half is the right command
+        in the wrong directory.
+  \item \textbf{Did I reboot / log out?} SPI needs a reboot. Group membership
+        needs a fresh login. Both fail silently until you do.
+\end{enumerate}
+
+\section{Cannot reach the Pi}
+
+\begin{traptable}
+\code{ssh: Could not resolve hostname brewer.local} &
+  mDNS not working. Find the IP from your router and use it directly; then put
+  the IP in \code{HostName} in \code{\textasciitilde/.ssh/config}. \\
+\code{ssh: connect to host ... port 22: Connection refused} &
+  The Pi is up but SSH is not running --- you did not enable it in Imager.
+  Re-flash. \\
+\code{... Operation timed out} &
+  The Pi is not on the network at all. Wi-Fi credentials, 5\,GHz, wireless
+  country, or power. \\
+\code{ping} works, \code{ssh} does not &
+  SSH not enabled. Re-flash with the Services tab ticked. \\
+Never appeared at all &
+  Re-flash rather than diagnose. Five minutes, and it fixes most cases. \\
+Worked yesterday, not today &
+  DHCP gave it a new address. Use the hostname, or set a static lease in your
+  router. \\
+\end{traptable}
+
+\subsection*{\texttt{REMOTE HOST IDENTIFICATION HAS CHANGED}}
+
+\begin{trace}
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!      @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+\end{trace}
+
+You reflashed the Pi (new host key), or your router gave that address to a
+different device. Remove the stale entry:
+
+\begin{shell}
+ssh-keygen -R brewer.local
+ssh-keygen -R 192.168.1.42      # also the IP, if you used it
+\end{shell}
+
+\begin{trap}{Never disable host checking to make this go away}
+\code{StrictHostKeyChecking=no} silences the warning permanently and removes the
+only protection you have against connecting to an impostor.
+
+Remove the \emph{specific} stale entry instead. It is one command.
+\end{trap}
+
+\section{SSH keys still ask for a password}
+
+\begin{traptable}
+Asks for a password after \code{ssh-copy-id} &
+  Permissions. On the Pi: \code{chmod 700 \textasciitilde/.ssh} and
+  \code{chmod 600 \textasciitilde/.ssh/authorized\_keys}. SSH ignores loose
+  permissions \emph{silently}. \\
+Works for \code{ssh}, not for \code{scp}/\code{rsync} &
+  Those read \code{\textasciitilde/.ssh/config} too --- check the \code{Host}
+  alias matches what you are typing. \\
+\code{Permission denied (publickey)} after disabling passwords &
+  The key was never installed correctly. If you can no longer get in, mount the
+  SD card on your laptop and re-enable \code{PasswordAuthentication}, or
+  re-flash. \\
+Prompts for the key passphrase every time &
+  Add it to the agent: \code{ssh-add \textasciitilde/.ssh/id\_ed25519}
+  (macOS: \code{ssh-add --apple-use-keychain}). \\
+\end{traptable}
+
+Diagnose with \code{ssh -v brewer} --- it prints which keys were offered and what
+the server did with them.
+
+\section{Java and Maven}
+
+\begin{traptable}
+\code{java: command not found} &
+  Not installed, or not on your \code{PATH}. Reopen your terminal after
+  installing. \\
+\code{mvn -v} reports a different Java than \code{java -version} &
+  Maven uses \code{JAVA\_HOME}. Set it: \code{export JAVA\_HOME=\$(/usr/libexec/java\_home -v 21)} on macOS, or
+  \code{export JAVA\_HOME=/usr/lib/jvm/java-21-openjdk-arm64} on the Pi. \\
+\code{class file has wrong version 65.0} &
+  Compiled with a newer Java than you are running. Check both machines are 21. \\
+\code{Tests run: 0} &
+  Tests not found. Class must end in \code{Test} and live under
+  \code{src/test/java}. \\
+\code{Non-parseable POM} &
+  XML error. A comment containing \code{--} is the usual culprit; it is illegal
+  inside \code{<!-- -->}. \\
+Build downloads forever &
+  First build only. If it repeats, delete \code{\textasciitilde/.m2/repository}
+  and try once more. \\
+\code{ClassNotFoundException} at runtime &
+  Classpath missing the dependency jars. Use
+  \code{-cp "target/classes:target/dependency/*"} and run
+  \code{make deploy-full}. \\
+\end{traptable}
+
+\section{SPI and the reader}
+
+\begin{traptable}
+\code{/dev/spidev0.0: No such file} &
+  SPI not enabled, or you did not reboot after enabling it. \\
+\code{Permission denied} on spidev &
+  Not in the \code{spi} group --- \emph{or} you are, but have not logged out and
+  back in since. \\
+\code{No gpio chip found} &
+  You are running on your laptop, not the Pi. \\
+\code{VersionReg = 0x00} &
+  MISO stuck low. Power (3.3\,V, not 5\,V), then \reg{SDA} $\rightarrow$ pin 24,
+  then \reg{MISO} $\rightarrow$ pin 21. \\
+\code{VersionReg = 0xFF} &
+  MISO floating. Not connected, or dead module. \\
+Version changes between runs &
+  Wire length. \textbf{Shorten the jumpers.} This is not a code problem. \\
+Device or resource busy &
+  A previous run is still holding SPI. \code{ssh brewer 'pkill java'}. Use
+  \code{run.sh} (which passes \code{ssh -t}) so Ctrl-C actually reaches it. \\
+\end{traptable}
+
+\section{The Pi misbehaves}
+
+\begin{traptable}
+Random reboots, or a rainbow square &
+  Undervoltage. Replace the power supply \emph{and} the cable. Confirm with
+  \code{dmesg | grep -i voltage}. \\
+SSH dies during a build &
+  Out of memory --- the kernel killed \code{sshd}. Add swap
+  (Chapter~\ref{ch:pisetup}) and build on your laptop. \\
+Everything is extremely slow &
+  A slow or failing SD card. Check with \code{dmesg | grep -i mmc}. \\
+\code{No space left on device} &
+  \code{df -h /}. Clear caches with \code{sudo apt clean} and delete old
+  \code{target/} folders. \\
+Filesystem is read-only &
+  The card is failing or was corrupted by a power cut. Back up and re-flash. \\
+\end{traptable}
+
+\section{Git and GitHub}
+
+\begin{traptable}
+\code{Permission denied (publickey)} on push &
+  Your public key is not on GitHub. Test with \code{ssh -T git@github.com}. \\
+\code{Support for password authentication was removed} &
+  You are using an HTTPS remote. Switch to SSH:
+  \code{git remote set-url origin git@github.com:USER/REPO.git}. \\
+\code{failed to push some refs} &
+  The remote has commits you do not. \code{git pull --rebase} then push. \\
+\code{Please tell me who you are} &
+  Set \code{user.name} and \code{user.email} --- see
+  Chapter~\ref{ch:laptop}. \\
+Stuck in a full-screen editor &
+  That is vim. Press Escape, type \code{:q!}, press Enter. Then
+  \code{git config --global core.editor nano}. \\
+Committed a secret &
+  Assume it is compromised. Rotate the key or password. Deleting it in a later
+  commit does not remove it from history. \\
+\end{traptable}
+
+\section{The deploy loop}
+
+\begin{traptable}
+Changes have no effect &
+  Stale classes. \code{mvn clean compile \&\& make deploy-full}. \\
+\code{rsync: command not found} &
+  Install it on \emph{both} machines. \\
+Files land in \code{classes/classes/} &
+  Missing trailing slash on the rsync source. \code{target/classes/} means
+  ``the contents of''. \\
+Ctrl-C does not stop the remote program &
+  Use \code{ssh -t}. \code{run.sh} already does. \\
+\code{make: command not found} &
+  macOS: install the Xcode command line tools. Linux:
+  \code{sudo apt install make}. \\
+\end{traptable}
+
+\section{Still stuck?}
+
+Narrow it down before asking anyone, including a search engine:
+
+\begin{enumerate}
+  \item \textbf{Does it work on the other machine?} If \code{mvn test} passes on
+        your laptop but fails on the Pi, the problem is environmental, not code.
+  \item \textbf{Did it ever work?} If yes, \code{git diff} shows exactly what
+        changed since.
+  \item \textbf{What is the smallest thing that fails?} \code{ssh brewer
+        'echo hi'} before \code{make deploy}. Test one layer at a time.
+  \item \textbf{Read the whole error.} The useful line is often the third, not
+        the first --- and in Java the useful part is usually \code{Caused by:}
+        near the bottom.
+\end{enumerate}
+
+\begin{concept}{Bisect, do not stare}
+The habit that separates fast debugging from slow: instead of reading code
+hoping to spot the fault, \textbf{find the boundary between what works and what
+does not}.
+
+\code{ssh} works but \code{scp} does not $\rightarrow$ it is the config, not the
+network. \code{mvn test} passes but \code{make run} fails $\rightarrow$ it is the
+classpath, not the code.
+
+Each check halves the search space. Four checks turn sixteen possibilities into
+one.
+\end{concept}
