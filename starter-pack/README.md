@@ -12,11 +12,20 @@ starter-pack/
 ├── book/
 │   ├── setup-book.pdf      ← read this first
 │   └── *.tex               ← source; `make` rebuilds
-└── template/               ← copy this to start your project
-    ├── pom.xml, Makefile, .gitignore
-    ├── scripts/            ← pi-bootstrap, deploy, run
-    └── src/                ← ToolchainCheck + SpiProbe + a test
+├── template/               ← headless: start the card stack here
+│   ├── pom.xml, Makefile, .gitignore
+│   ├── scripts/            ← pi-bootstrap, deploy, run
+│   └── src/                ← ToolchainCheck + SpiProbe + a test
+└── template-gui/           ← the kiosk UI, for the GUI episodes
+    ├── src/main/resources/ ← FXML + CSS + artwork, GIVEN COMPLETE
+    └── src/main/java/      ← UIController with 13 TODOs, YOURS
 ```
+
+**Two templates, on purpose.** `template/` is headless — Chapters 1–11 of
+Volume One need no screen, and dragging JavaFX through them would mean a heavier
+build and a desktop on the Pi from day one. `template-gui/` is the touchscreen,
+split so the *design* is handed to you and the *behaviour* is what you write on
+camera.
 
 ## Start here
 

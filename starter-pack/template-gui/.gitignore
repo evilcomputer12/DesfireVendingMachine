@@ -1,0 +1,19 @@
+# Maven
+target/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Never commit secrets. If you ever put a real key in a file, put its name
+# here FIRST, before you create it.
+*.key
+secrets.properties
